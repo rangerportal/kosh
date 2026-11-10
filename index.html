@@ -248,6 +248,10 @@ main{padding-bottom:calc(110px + env(safe-area-inset-bottom,0px))}
 
 <div id="app"></div>
 
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+
 <script>
 "use strict";
 /* ================= Icons ================= */
@@ -298,63 +302,70 @@ const shortInr = n => {
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36)+Math.random().toString(36).slice(2));
 function ls(k, v){ try{ if (v === undefined) return localStorage.getItem(k); if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v); }catch(e){ return null; } }
 
-/* ================= Storage (IndexedDB with in-memory fallback) ================= */
-const DB = (() => {
-  let dbp = null, mem = null;
-  function open(){
-    if (dbp) return dbp;
-    dbp = new Promise((res) => {
-      try{
-        const r = indexedDB.open('kosh-db', 1);
-        r.onupgradeneeded = () => {
-          const db = r.result;
-          const u = db.createObjectStore('users', {keyPath:'id'});
-          u.createIndex('username','username',{unique:true});
-          u.createIndex('mobile','mobile',{unique:true});
-          const t = db.createObjectStore('txns', {keyPath:'id'});
-          t.createIndex('userId','userId');
-        };
-        r.onsuccess = () => res(r.result);
-        r.onerror = () => { mem = {users:[], txns:[]}; res(null); };
-      }catch(e){ mem = {users:[], txns:[]}; res(null); }
-    });
-    return dbp;
-  }
-  const req = r => new Promise((res, rej) => { r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
-  async function store(name, mode){ const db = await open(); return db ? db.transaction(name, mode).objectStore(name) : null; }
-  return {
-    async getUserBy(field, value){
-      const s = await store('users','readonly');
-      if (!s) return mem.users.find(u => u[field] === value) || null;
-      return (await req(s.index(field).get(value))) || null;
-    },
-    async getUser(id){ const s = await store('users','readonly'); return s ? (await req(s.get(id))) || null : mem.users.find(u=>u.id===id) || null; },
-    async putUser(u){ const s = await store('users','readwrite'); if (!s){ mem.users = mem.users.filter(x=>x.id!==u.id).concat(u); return; } await req(s.put(u)); },
-    async txns(userId){
-      const s = await store('txns','readonly');
-      if (!s) return mem.txns.filter(t=>t.userId===userId);
-      return req(s.index('userId').getAll(userId));
-    },
-    async putTxn(t){ const s = await store('txns','readwrite'); if (!s){ mem.txns = mem.txns.filter(x=>x.id!==t.id).concat(t); return; } await req(s.put(t)); },
-    async putMany(list){
-      const db = await open();
-      if (!db){ list.forEach(t => { mem.txns = mem.txns.filter(x=>x.id!==t.id).concat(t); }); return; }
-      await new Promise((res, rej) => { const tx = db.transaction('txns','readwrite'); const s = tx.objectStore('txns'); list.forEach(t => s.put(t)); tx.oncomplete = res; tx.onerror = () => rej(tx.error); });
-    },
-    async delTxn(id){ const s = await store('txns','readwrite'); if (!s){ mem.txns = mem.txns.filter(x=>x.id!==id); return; } await req(s.delete(id)); },
-    async clearTxns(userId){ const list = await this.txns(userId); for (const t of list) await this.delTxn(t.id); },
-    persistent: async () => { try{ if (navigator.storage && navigator.storage.persist) await navigator.storage.persist(); }catch(e){} }
-  };
-})();
+/* ================= Firebase (cloud database + login, with offline cache) ================= */
+const FB_CONFIG = {
+  apiKey: "AIzaSyClMopTeeDUL4FBTLNmwGyBVyB9XP5Hkyw",
+  authDomain: "kosh-9edf3.firebaseapp.com",
+  projectId: "kosh-9edf3",
+  storageBucket: "kosh-9edf3.firebasestorage.app",
+  messagingSenderId: "743343289976",
+  appId: "1:743343289976:web:d36229b97d134691ca1f8d"
+};
+let auth = null, fs = null, FB_OK = false;
+try{
+  firebase.initializeApp(FB_CONFIG);
+  auth = firebase.auth();
+  fs = firebase.firestore();
+  // Keep a full copy on the phone: app opens and records entries with no internet, syncs later.
+  fs.enablePersistence({synchronizeTabs:true}).catch(() => {});
+  FB_OK = true;
+}catch(e){ FB_OK = false; }
 
-/* ================= Password hashing (PBKDF2-SHA256, 150k rounds) ================= */
-const b64 = buf => btoa(String.fromCharCode(...new Uint8Array(buf)));
-async function hashPw(pw, saltB64){
-  const salt = saltB64 ? Uint8Array.from(atob(saltB64), c=>c.charCodeAt(0)) : crypto.getRandomValues(new Uint8Array(16));
-  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(pw), 'PBKDF2', false, ['deriveBits']);
-  const bits = await crypto.subtle.deriveBits({name:'PBKDF2', hash:'SHA-256', salt, iterations:150000}, key, 256);
-  return {salt: b64(salt), hash: b64(bits)};
+// Usernames sign in through Firebase email/password using a private, non-mailable address.
+const emailFor = u => `${u}@users.kosh.app`;
+const userDoc = () => fs.collection('users').doc(S.user.uid);
+const txCol = () => userDoc().collection('txns');
+const fail = (e, fallback) => {
+  const c = (e && e.code) || '';
+  if (c.includes('network') || c === 'unavailable' || /offline/i.test(e && e.message || '')) return 'No internet connection. This step needs internet. Connect and try again.';
+  if (c.includes('invalid-credential') || c.includes('wrong-password') || c.includes('user-not-found') || c.includes('invalid-login')) return 'Incorrect username, mobile or password.';
+  if (c.includes('too-many-requests')) return 'Too many attempts. Wait a few minutes and try again.';
+  if (c.includes('email-already-in-use')) return 'That username is taken. Go back and choose another.';
+  if (c.includes('permission-denied')) return 'This mobile number or username already has an account.';
+  if (c.includes('operation-not-allowed')) return 'Email/Password sign-in is not enabled in Firebase Authentication.';
+  return fallback || ('Something went wrong: ' + (e && e.message || 'unknown error'));
+};
+// Batched writes (max 450 per batch). Not awaited when offline: Firestore queues them.
+function writeMany(ops){
+  for (let i = 0; i < ops.length; i += 450){
+    const b = fs.batch();
+    ops.slice(i, i+450).forEach(fn => fn(b));
+    b.commit().catch(e => toast(fail(e, 'Some changes could not sync.')));
+  }
 }
+
+/* Entries saved by the first, phone-only version of Kosh (IndexedDB "kosh-db") */
+function readOldLocal(){
+  return new Promise(res => {
+    try{
+      const r = indexedDB.open('kosh-db');
+      r.onupgradeneeded = () => { r.transaction.abort(); };
+      r.onerror = () => res([]);
+      r.onsuccess = () => {
+        const db = r.result;
+        if (!db.objectStoreNames.contains('txns')){ db.close(); return res([]); }
+        const tx = db.transaction(['users','txns'], 'readonly');
+        const ug = tx.objectStore('users').getAll(), tg = tx.objectStore('txns').getAll();
+        tx.oncomplete = () => {
+          const demo = new Set(ug.result.filter(u => u.demo || u.username === 'demo').map(u => u.id));
+          db.close(); res(tg.result.filter(t => !demo.has(t.userId)));
+        };
+        tx.onerror = () => { db.close(); res([]); };
+      };
+    }catch(e){ res([]); }
+  });
+}
+
 function pwScore(pw){
   let s = 0;
   if (pw.length >= 8) s++; if (pw.length >= 12) s++;
@@ -385,9 +396,14 @@ function toast(msg){
 }
 
 /* ================= Auth screens ================= */
-function brand(){ return `<div class="brand">${I.gem}<div><h1>Kosh</h1><p>Your money book, kept on this phone</p></div></div>`; }
+function brand(){ return `<div class="brand">${I.gem}<div><h1>Kosh</h1><p>Your money book, synced and offline-ready</p></div></div>`; }
+
+function renderLoading(text){
+  app.innerHTML = `<div class="wrap auth" style="align-items:center;text-align:center">${I.gem}<p class="muted" style="margin-top:14px">${esc(text || 'Opening your money book…')}</p></div>`;
+}
 
 function renderLogin(msg=''){
+  S.screen = 'login';
   app.innerHTML = `<div class="wrap auth">
     ${brand()}
     <h2>Welcome back</h2>
@@ -398,32 +414,36 @@ function renderLogin(msg=''){
       <div class="err" id="lerr">${esc(msg)}</div>
       <button class="btn" id="lbtn">Sign in</button>
     </form>
-    <div class="divider">or</div>
-    <button class="btn ghost" id="demo">Try a demo account</button>
     <div class="switch">New here? <button class="link" id="toSignup">Create an account</button></div>
-    <p class="note">Everything is stored only on this device. Nothing is uploaded.</p>
+    <p class="note">Your entries are saved to your private account and stay on this phone too, so the app works without internet after you sign in once.</p>
   </div>`;
   bindEyes();
   $('#toSignup').onclick = () => { S.signup = {step:1, data:{}}; renderSignup(); };
-  $('#demo').onclick = startDemo;
+  if (!FB_OK) $('#lerr').textContent = 'Could not load the sign-in service. Connect to the internet and reopen the app.';
   $('#lf').onsubmit = async e => {
     e.preventDefault();
     const id = $('#lid').value.trim(), pw = $('#lpw').value;
     if (!id || !pw) return $('#lerr').textContent = 'Enter your username or mobile and your password.';
-    $('#lbtn').disabled = true;
+    if (!FB_OK) return;
+    $('#lbtn').disabled = true; $('#lerr').textContent = '';
     try{
-      const mob = id.replace(/\D/g,'').slice(-10);
-      let u = await DB.getUserBy('username', id.toLowerCase());
-      if (!u && /^\d{10}$/.test(mob)) u = await DB.getUserBy('mobile', mob);
-      if (!u){ $('#lerr').textContent = 'No account found with that username or mobile.'; $('#lbtn').disabled=false; return; }
-      const h = await hashPw(pw, u.salt);
-      if (h.hash !== u.hash){ $('#lerr').textContent = 'Incorrect password. Try again.'; $('#lbtn').disabled=false; return; }
-      await login(u);
-    }catch(err){ $('#lerr').textContent = 'Sign-in failed: this browser blocked secure storage. Open the app over https.'; $('#lbtn').disabled=false; }
+      let username = id.toLowerCase();
+      const compact = id.replace(/[\s-]/g,'');
+      if (/^(\+?91)?[6-9]\d{9}$/.test(compact)){
+        const d = await fs.collection('mobiles').doc(compact.slice(-10)).get({source:'server'});
+        if (!d.exists){ $('#lerr').textContent = 'No account found with that mobile number.'; $('#lbtn').disabled = false; return; }
+        username = d.data().username;
+      }
+      await auth.signInWithEmailAndPassword(emailFor(username), pw);
+      // onAuthStateChanged opens the app
+    }catch(err){ $('#lerr').textContent = fail(err); $('#lbtn').disabled = false; }
   };
 }
 
+const validUsername = u => /^[a-z0-9][a-z0-9._]{2,18}[a-z0-9_]$/.test(u) && !u.includes('..');
+
 function renderSignup(){
+  S.screen = 'signup';
   const st = S.signup, d = st.data;
   const steps = `<div class="steps" aria-label="Step ${st.step} of 3"><i class="on"></i><i class="${st.step>1?'on':''}"></i><i class="${st.step>2?'on':''}"></i></div>`;
   let body = '';
@@ -433,17 +453,17 @@ function renderSignup(){
       <div class="field"><label for="sname">Full name</label><input class="input" id="sname" autocomplete="name" value="${esc(d.name||'')}" placeholder="e.g. Priya Baruah"></div>
       <div class="field"><label for="smob">Mobile number</label><div class="prefix"><span>+91</span><input id="smob" inputmode="numeric" autocomplete="tel-national" maxlength="10" value="${esc(d.mobile||'')}" placeholder="98765 43210"></div><span class="hint">10-digit Indian mobile number. You can sign in with it later.</span></div>
       <div class="err" id="serr"></div>
-      <button class="btn">Continue</button>
+      <button class="btn" id="sbtn">Continue</button>
     </form>`;
   if (st.step === 2) body = `
     <h2>Choose a username</h2><p class="lead">Step 2 of 3 · Hi ${esc(d.name.split(' ')[0])}, pick how you'll sign in</p>
     <form id="sf" novalidate>
       <div class="field"><label for="suser">Username</label><input class="input" id="suser" autocapitalize="off" autocomplete="username" value="${esc(d.username||'')}" placeholder="priya.b"><span class="hint">4–20 characters: letters, numbers, dot or underscore.</span></div>
       <div class="err" id="serr"></div>
-      <div class="row"><button type="button" class="btn ghost" id="back">Back</button><button class="btn">Continue</button></div>
+      <div class="row"><button type="button" class="btn ghost" id="back">Back</button><button class="btn" id="sbtn">Continue</button></div>
     </form>`;
   if (st.step === 3) body = `
-    <h2>Set a password</h2><p class="lead">Step 3 of 3 · Protects your money book on this phone</p>
+    <h2>Set a password</h2><p class="lead">Step 3 of 3 · Protects your account on every phone</p>
     <form id="sf" novalidate>
       <div class="field"><label for="spw">Password</label><div class="pw"><input class="input" id="spw" type="password" autocomplete="new-password"><button type="button" data-eye="spw">SHOW</button></div>
         <div class="meter"><b id="pm"></b></div><span class="hint" id="ph">At least 8 characters with a number.</span></div>
@@ -452,11 +472,13 @@ function renderSignup(){
       <div class="row"><button type="button" class="btn ghost" id="back">Back</button><button class="btn" id="sbtn">Create account</button></div>
     </form>`;
   app.innerHTML = `<div class="wrap auth">${brand()}${steps}${body}
-    <div class="switch">Already have an account? <button class="link" id="toLogin">Sign in</button></div></div>`;
+    <div class="switch">Already have an account? <button class="link" id="toLogin">Sign in</button></div>
+    <p class="note">Creating an account needs internet.</p></div>`;
   bindEyes();
   $('#toLogin').onclick = () => renderLogin();
   const back = $('#back'); if (back) back.onclick = () => { st.step--; renderSignup(); };
   const err = m => $('#serr').textContent = m;
+  const busy = on => { $('#sbtn').disabled = on; };
   if (st.step === 1){
     $('#smob').oninput = e => e.target.value = e.target.value.replace(/\D/g,'').slice(0,10);
     $('#sname').focus();
@@ -470,30 +492,49 @@ function renderSignup(){
   }
   $('#sf').onsubmit = async e => {
     e.preventDefault();
+    if (!FB_OK) return err('Could not load the sign-up service. Connect to the internet and reopen the app.');
     if (st.step === 1){
       const name = $('#sname').value.trim().replace(/\s+/g,' '), mobile = $('#smob').value;
       if (name.length < 2) return err('Enter your name (at least 2 letters).');
       if (!/^[6-9]\d{9}$/.test(mobile)) return err('Enter a valid 10-digit mobile number starting with 6, 7, 8 or 9.');
-      if (await DB.getUserBy('mobile', mobile)) return err('This mobile number already has an account. Sign in instead.');
+      busy(true);
+      try{
+        if ((await fs.collection('mobiles').doc(mobile).get({source:'server'})).exists){ busy(false); return err('This mobile number already has an account. Sign in instead.'); }
+      }catch(x){ busy(false); return err(fail(x)); }
       Object.assign(d, {name, mobile}); st.step = 2; return renderSignup();
     }
     if (st.step === 2){
       const username = $('#suser').value.trim().toLowerCase();
-      if (!/^[a-z0-9._]{4,20}$/.test(username)) return err('Use 4–20 letters, numbers, dots or underscores.');
-      if (await DB.getUserBy('username', username)) return err('That username is taken. Try another.');
+      if (!validUsername(username)) return err('Use 4–20 letters, numbers, dots or underscores. It can\'t start or end with a dot.');
+      busy(true);
+      try{
+        if ((await fs.collection('usernames').doc(username).get({source:'server'})).exists){ busy(false); return err('That username is taken. Try another.'); }
+      }catch(x){ busy(false); return err(fail(x)); }
       d.username = username; st.step = 3; return renderSignup();
     }
     const pw = $('#spw').value, pw2 = $('#spw2').value;
     if (pw.length < 8 || !/\d/.test(pw)) return err('Password needs at least 8 characters including a number.');
     if (pw !== pw2) return err('The two passwords do not match.');
-    $('#sbtn').disabled = true;
+    busy(true);
+    S.signingUp = true;
+    let cred = null;
     try{
-      const h = await hashPw(pw);
-      const u = {id:uid(), name:d.name, mobile:d.mobile, username:d.username, salt:h.salt, hash:h.hash, created:Date.now()};
-      await DB.putUser(u);
-      await DB.persistent();
-      await login(u, 'Account created. Welcome, ' + u.name.split(' ')[0] + '!');
-    }catch(ex){ err('Could not create account: secure storage is unavailable in this browser.'); $('#sbtn').disabled = false; }
+      cred = await auth.createUserWithEmailAndPassword(emailFor(d.username), pw);
+      const uid = cred.user.uid, b = fs.batch();
+      b.set(fs.collection('usernames').doc(d.username), {uid});
+      b.set(fs.collection('mobiles').doc(d.mobile), {uid, username:d.username});
+      b.set(fs.collection('users').doc(uid), {name:d.name, mobile:d.mobile, username:d.username, created:Date.now()});
+      await b.commit();
+      S.signingUp = false;
+      startSession(cred.user, 'Account created. Welcome, ' + d.name.split(' ')[0] + '!');
+    }catch(x){
+      if (cred){ try{ await cred.user.delete(); }catch(_){} }
+      S.signingUp = false;
+      const c = (x && x.code) || '';
+      if (c.includes('email-already-in-use')){ st.step = 2; renderSignup(); return $('#serr').textContent = 'That username was just taken. Choose another.'; }
+      if (c.includes('permission-denied')){ st.step = 1; renderSignup(); return $('#serr').textContent = 'This mobile number already has an account. Sign in instead.'; }
+      err(fail(x)); busy(false);
+    }
   };
 }
 
@@ -504,46 +545,60 @@ function bindEyes(){
   });
 }
 
-async function login(u, msg){
-  S.user = u; ls('kosh.session', u.id);
-  S.txns = await DB.txns(u.id);
-  S.view = 'home'; render();
-  if (msg) toast(msg);
-}
-function logout(){ S.user = null; S.txns = []; ls('kosh.session', null); renderLogin(); }
+/* ================= Session & live sync ================= */
+let unsubTx = null, unsubProf = null;
+function stopSync(){ if (unsubTx) unsubTx(); if (unsubProf) unsubProf(); unsubTx = unsubProf = null; }
 
-async function startDemo(){
-  let u = await DB.getUserBy('username','demo');
-  if (!u){
-    const h = await hashPw('demo1234');
-    u = {id:uid(), name:'Demo User', mobile:'9000000000', username:'demo', salt:h.salt, hash:h.hash, created:Date.now(), demo:true};
-    await DB.putUser(u);
-    await DB.putMany(sampleTxns(u.id));
-  }
-  await login(u, 'Demo account · sample data (password: demo1234)');
+function startSession(fu, msg){
+  stopSync();
+  S.screen = 'app';
+  S.user = {uid:fu.uid, username:(fu.email||'').split('@')[0], name:'', mobile:'', created: Date.parse(fu.metadata && fu.metadata.creationTime) || Date.now()};
+  S.ready = false; S.view = 'home'; S.txns = []; S.oldLocal = [];
+  renderLoading();
+  unsubProf = userDoc().onSnapshot(d => { if (d.exists){ Object.assign(S.user, d.data()); if (S.ready) safeRender(); } }, () => {});
+  unsubTx = txCol().onSnapshot({includeMetadataChanges:true}, snap => {
+    S.pending = snap.metadata.hasPendingWrites;
+    const changed = !S.ready || snap.docChanges().length > 0;
+    if (changed) S.txns = snap.docs.map(d => ({id:d.id, ...d.data()}));
+    const first = !S.ready; S.ready = true;
+    if (changed) safeRender(); else updateBadge();
+    if (first && msg) toast(msg);
+  }, e => toast(fail(e, 'Could not load your entries.')));
+  readOldLocal().then(list => {
+    try{ if (localStorage.getItem('kosh.moved.' + fu.uid)) return; }catch(e){}
+    S.oldLocal = list; if (list.length && S.ready && S.view === 'home') safeRender();
+  });
 }
-function sampleTxns(userId){
-  const out = [], t = today();
-  const add = (daysAgo, type, amount, category, note, mode='UPI') =>
-    out.push({id:uid(), userId, type, amount, category, note, mode, date: ymd(addDays(t,-daysAgo)), created:Date.now()});
-  for (let m = 0; m < 12; m++){
-    const base = m*30;
-    add(base+ (t.getDate()>1? t.getDate()-1 : 0), 'credit', 68000 + (m%3)*1500, 'Salary', 'Monthly salary', 'Bank');
-    add(base+3, 'debit', 12500, 'Loan EMI', 'Home loan EMI', 'Bank');
-    add(base+5, 'debit', 5000, 'Investment', 'SIP – index fund', 'Bank');
-    add(base+2, 'expense', 3200 + (m*137)%900, 'Groceries', 'Weekly groceries');
-    add(base+9, 'expense', 1850 + (m*91)%600, 'Bills', 'Electricity and broadband');
-    add(base+12, 'expense', 640 + (m*53)%400, 'Food', 'Dinner out');
-    add(base+15, 'expense', 900 + (m*71)%500, 'Transport', 'Fuel');
-    add(base+19, 'expense', 2400 + (m*211)%3000, 'Shopping', 'Clothes and household');
-    if (m % 2 === 0) add(base+22, 'credit', 4200, 'Business', 'Freelance design work');
-    if (m % 4 === 1) add(base+25, 'expense', 1500, 'Health', 'Pharmacy and checkup', 'Card');
-    if (m === 4) add(base+8, 'expense', 14800, 'Travel', 'Trip to Shillong', 'Card');
-  }
-  add(0,'expense',180,'Food','Tea and snacks','Cash');
-  add(1,'debit',2000,'Cash withdrawal','ATM','Cash');
-  add(1,'credit',350,'Refund','Order refund');
-  return out;
+// Avoid redrawing under an open sheet; redraw when it closes.
+function safeRender(){ if ($('#scrim')) S.dirty = true; else render(); }
+
+function syncLabel(){
+  if (!navigator.onLine) return {t:'Offline · saved on phone', c:'var(--gold)'};
+  if (S.pending) return {t:'Syncing…', c:'var(--gold)'};
+  return {t:'Synced', c:'var(--credit)'};
+}
+function updateBadge(){
+  const b = $('#sync'); if (!b) return;
+  const s = syncLabel(); b.innerHTML = `<i style="background:${s.c}"></i>${s.t}`;
+}
+
+async function logout(){
+  stopSync(); S.user = null; S.txns = [];
+  try{ await auth.signOut(); }catch(e){}
+  renderLogin();
+}
+
+function moveOldLocal(){
+  const have = new Set(S.txns.map(t => t.id));
+  const list = S.oldLocal.filter(t => !have.has(t.id));
+  writeMany(list.map(t => b => {
+    const {id, userId, ...data} = t;
+    b.set(txCol().doc(id), {type:data.type, amount:data.amount, category:data.category||'Other', note:data.note||'', mode:data.mode||'UPI', date:data.date, created:data.created||Date.now(), updated:Date.now()});
+  }));
+  try{ localStorage.setItem('kosh.moved.' + S.user.uid, '1'); }catch(e){}
+  S.oldLocal = [];
+  toast(`Moved ${list.length} entries into your account`);
+  render();
 }
 
 /* ================= Totals ================= */
@@ -561,12 +616,12 @@ const TITLES = {home:'', txns:'Transactions', reports:'Reports', profile:'Profil
 function render(){
   if (!S.user) return renderLogin();
   const v = S.view;
-  const initials = S.user.name.split(' ').map(w=>w[0]).slice(0,2).join('').toUpperCase();
+  const initials = dispName().split(' ').map(w=>w[0]).slice(0,2).join('').toUpperCase();
   const greet = (() => { const h = new Date().getHours(); return h<12?'Good morning':h<17?'Good afternoon':'Good evening'; })();
   app.innerHTML = `
     <header class="top"><div class="wrap">
-      ${v==='home' ? `<div><div class="eyebrow">${greet}</div><h1>${esc(S.user.name.split(' ')[0])}</h1></div>` : `<h1>${TITLES[v]}</h1>`}
-      <div class="row" style="align-items:center"><span class="offline" title="Works without internet"><i></i>${navigator.onLine?'Saved on device':'Offline'}</span>
+      ${v==='home' ? `<div><div class="eyebrow">${greet}</div><h1>${esc(dispName().split(' ')[0])}</h1></div>` : `<h1>${TITLES[v]}</h1>`}
+      <div class="row" style="align-items:center"><span class="offline" id="sync" role="status"></span>
       <button class="avatar" data-go="profile" aria-label="Profile">${esc(initials)}</button></div>
     </div></header>
     <main><div class="wrap stack" id="view"></div></main>
@@ -577,6 +632,7 @@ function render(){
     </div></nav>`;
   document.querySelectorAll('[data-go]').forEach(b => b.onclick = () => { S.view = b.dataset.go; render(); window.scrollTo(0,0); });
   $('#fab').onclick = () => openTxn();
+  updateBadge();
   ({home:viewHome, txns:viewTxns, reports:viewReports, profile:viewProfile})[v]();
 }
 const tabBtn = (k,l,ic) => `<button class="tab ${S.view===k?'on':''}" data-go="${k}" ${S.view===k?'aria-current="page"':''}>${ic}${l}</button>`;
@@ -608,6 +664,7 @@ function viewHome(){
         <div><span><i class="dot e"></i>Expense</span><b class="num">${inr(all.expense)}</b></div>
       </div>
     </section>
+    ${S.oldLocal && S.oldLocal.length ? `<section class="panel" style="padding:14px 16px;display:flex;flex-direction:column;gap:10px"><div><b>${S.oldLocal.length} entries found on this phone</b><div class="muted" style="font-size:13px">Saved by the earlier phone-only version of Kosh. Move them into your account so they sync to every phone.</div></div><button class="btn" id="moveOld">Move into my account</button></section>` : ''}
     <div class="quick">
       <button class="qa" data-add="credit"><i class="bg-credit">${I.in}</i><b>Credit</b><small>Money in</small></button>
       <button class="qa" data-add="debit"><i class="bg-debit">${I.out}</i><b>Debit</b><small>Paid out</small></button>
@@ -627,6 +684,7 @@ function viewHome(){
       <div class="panel list">${recent.length ? recent.map(txRow).join('') :
         `<div class="empty"><b>No entries yet</b>Tap the + button to record your first credit, debit or expense.</div>`}</div>
     </section>`;
+  const mo = $('#moveOld'); if (mo) mo.onclick = moveOldLocal;
   v.querySelectorAll('[data-add]').forEach(b => b.onclick = () => openTxn(null, b.dataset.add));
   v.querySelectorAll('[data-go2]').forEach(b => b.onclick = () => { S.view = b.dataset.go2; render(); });
   bindTx(v);
@@ -767,12 +825,13 @@ function saveFile(text, name, type){
 }
 
 /* ================= Profile ================= */
+const dispName = () => (S.user && (S.user.name || S.user.username)) || '';
 function viewProfile(){
-  const u = S.user, all = totals(S.txns), theme = ls('kosh.theme') || 'system';
+  const u = S.user, all = totals(S.txns), theme = ls('kosh.theme') || 'system', mob = u.mobile || '';
   const v = $('#view');
   v.innerHTML = `
-    <section class="panel who"><div class="avatar">${esc(u.name[0].toUpperCase())}</div>
-      <div style="min-width:0"><h2>${esc(u.name)}</h2><div class="muted" style="font-size:13px">@${esc(u.username)} · +91 ${esc(u.mobile.slice(0,5))} ${esc(u.mobile.slice(5))}</div>
+    <section class="panel who"><div class="avatar">${esc(dispName()[0] ? dispName()[0].toUpperCase() : '?')}</div>
+      <div style="min-width:0"><h2>${esc(dispName())}</h2><div class="muted" style="font-size:13px">@${esc(u.username)}${mob ? ` · +91 ${esc(mob.slice(0,5))} ${esc(mob.slice(5))}` : ''}</div>
       <div class="muted" style="font-size:12px">Member since ${fmtDate(ymd(new Date(u.created)))}</div></div></section>
     <div class="month">
       <div><span>Total credit</span><b class="num t-credit">${inr(all.credit)}</b></div>
@@ -782,7 +841,7 @@ function viewProfile(){
     </div>
     <section class="panel menu">
       <div class="mi"><span>Appearance</span><div class="seg">${['system','light','dark'].map(t=>`<button class="${theme===t?'on':''}" data-th="${t}">${t[0].toUpperCase()+t.slice(1)}</button>`).join('')}</div></div>
-      <button class="mi" id="cpw"><span>Change password</span><small>›</small></button>
+      <button class="mi" id="cpw"><span>Change password</span><small>Needs internet</small></button>
       <button class="mi" id="exp"><span>Export all entries</span><small>CSV</small></button>
       <button class="mi" id="bak"><span>Back up data</span><small>JSON file</small></button>
       <label class="mi" for="imp" style="cursor:pointer"><span>Restore from backup</span><small>JSON file</small></label>
@@ -790,24 +849,25 @@ function viewProfile(){
       <button class="mi" id="wipe"><span class="t-debit">Delete all entries</span><small>›</small></button>
     </section>
     <button class="btn ghost" id="out">Sign out</button>
-    <p class="note">Kosh works fully offline. Your account and entries live only in this phone's storage, so back up before clearing browser data or changing phones.</p>`;
+    <p class="note">Your entries are stored in your private cloud account and cached on this phone. Sign in on any phone to see them. Changes made offline sync automatically when you're back online.</p>`;
   v.querySelectorAll('[data-th]').forEach(b => b.onclick = () => { ls('kosh.theme', b.dataset.th); applyTheme(); viewProfile(); });
-  $('#out').onclick = logout;
+  $('#out').onclick = () => confirmSheet('Sign out?', S.pending ? 'Some changes have not synced yet. Signing out now may lose them. Connect to the internet first.' : 'Your entries stay safe in your account. Sign in again any time.', 'Sign out', logout);
   $('#exp').onclick = () => downloadCSV(sorted(S.txns), `kosh-all-${ymd(today())}.csv`);
-  $('#bak').onclick = () => saveFile(JSON.stringify({app:'kosh', v:1, exported:new Date().toISOString(), txns:S.txns.map(({userId,...t})=>t)}, null, 1), `kosh-backup-${ymd(today())}.json`, 'application/json');
+  $('#bak').onclick = () => saveFile(JSON.stringify({app:'kosh', v:2, exported:new Date().toISOString(), txns:S.txns}, null, 1), `kosh-backup-${ymd(today())}.json`, 'application/json');
   $('#imp').onchange = async e => {
     const f = e.target.files[0]; if (!f) return;
     try{
       const data = JSON.parse(await f.text());
       if (data.app !== 'kosh' || !Array.isArray(data.txns)) throw 0;
       const have = new Set(S.txns.map(t=>t.id));
-      const add = data.txns.filter(t => t && !have.has(t.id) && TYPE_LABEL[t.type] && t.amount > 0 && /^\d{4}-\d{2}-\d{2}$/.test(t.date)).map(t => ({...t, userId:S.user.id}));
-      await DB.putMany(add); S.txns = await DB.txns(S.user.id);
-      toast(`Restored ${add.length} entries`); viewProfile();
+      const add = data.txns.filter(t => t && t.id && !have.has(t.id) && TYPE_LABEL[t.type] && t.amount > 0 && /^\d{4}-\d{2}-\d{2}$/.test(t.date));
+      writeMany(add.map(t => b => b.set(txCol().doc(String(t.id)), {type:t.type, amount:Number(t.amount), category:t.category||'Other', note:t.note||'', mode:t.mode||'UPI', date:t.date, created:t.created||Date.now(), updated:Date.now()})));
+      toast(`Restoring ${add.length} entries`);
     }catch(x){ toast('That file is not a Kosh backup.'); }
   };
-  $('#wipe').onclick = () => confirmSheet('Delete all entries?', `This removes all ${S.txns.length} entries from this phone. It can't be undone unless you have a backup.`, 'Delete everything', async () => {
-    await DB.clearTxns(S.user.id); S.txns = []; toast('All entries deleted'); viewProfile();
+  $('#wipe').onclick = () => confirmSheet('Delete all entries?', `This removes all ${S.txns.length} entries from your account on every phone. It can't be undone unless you have a backup.`, 'Delete everything', async () => {
+    writeMany(S.txns.map(t => b => b.delete(txCol().doc(t.id))));
+    toast('All entries deleted');
   });
   $('#cpw').onclick = changePw;
 }
@@ -819,16 +879,24 @@ function changePw(){
       <div class="field"><label for="c1">New password</label><input class="input" type="password" id="c1" autocomplete="new-password"><span class="hint">At least 8 characters with a number.</span></div>
       <div class="field"><label for="c2">Confirm new password</label><input class="input" type="password" id="c2" autocomplete="new-password"></div>
       <div class="err" id="cerr"></div>
-      <button class="btn">Update password</button></form>`);
+      <button class="btn" id="cbtn">Update password</button></form>`);
   sc.querySelector('#cf').onsubmit = async e => {
     e.preventDefault();
     const err = m => sc.querySelector('#cerr').textContent = m;
     const c0 = sc.querySelector('#c0').value, c1 = sc.querySelector('#c1').value, c2 = sc.querySelector('#c2').value;
-    if ((await hashPw(c0, S.user.salt)).hash !== S.user.hash) return err('Current password is incorrect.');
     if (c1.length < 8 || !/\d/.test(c1)) return err('New password needs at least 8 characters including a number.');
     if (c1 !== c2) return err('The new passwords do not match.');
-    const h = await hashPw(c1); Object.assign(S.user, {salt:h.salt, hash:h.hash, demo:false}); await DB.putUser(S.user);
-    closeSheet(); toast('Password updated');
+    sc.querySelector('#cbtn').disabled = true;
+    try{
+      const cu = auth.currentUser;
+      await cu.reauthenticateWithCredential(firebase.auth.EmailAuthProvider.credential(cu.email, c0));
+      await cu.updatePassword(c1);
+      closeSheet(); toast('Password updated');
+    }catch(x){
+      const c = (x && x.code) || '';
+      err(c.includes('credential') || c.includes('wrong-password') ? 'Current password is incorrect.' : fail(x));
+      sc.querySelector('#cbtn').disabled = false;
+    }
   };
 }
 
@@ -841,7 +909,7 @@ function sheet(html){
   document.body.appendChild(sc); document.body.style.overflow = 'hidden';
   return sc;
 }
-function closeSheet(){ const s = $('#scrim'); if (s) s.remove(); document.body.style.overflow = ''; }
+function closeSheet(){ const s = $('#scrim'); if (s) s.remove(); document.body.style.overflow = ''; if (S.dirty && S.user){ S.dirty = false; render(); } }
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeSheet(); });
 
 function confirmSheet(title, msg, label, fn){
@@ -885,25 +953,29 @@ function openTxn(tx, presetType){
     if (!(amount > 0)) return q('#terr').textContent = 'Enter an amount greater than zero.';
     if (amount > 1e10) return q('#terr').textContent = 'That amount is too large.';
     const date = q('#tdate').value; if (!date) return q('#terr').textContent = 'Pick a date.';
-    const t = {...f, amount, date, note:q('#tnote').value.trim(), mode:q('#tmode').value, userId:S.user.id, id: f.id || uid(), created: f.created || Date.now(), updated: Date.now()};
-    await DB.putTxn(t);
+    const t = {type:f.type, category:f.category, amount, date, note:q('#tnote').value.trim(), mode:q('#tmode').value, id: f.id || uid(), created: f.created || Date.now(), updated: Date.now()};
+    const {id, ...data} = t;
+    txCol().doc(id).set(data).catch(e => toast(fail(e, 'Could not save this entry.')));
     S.txns = S.txns.filter(x => x.id !== t.id).concat(t);
     closeSheet(); render();
     toast(edit ? 'Entry updated' : `${TYPE_LABEL[t.type]} of ${inr(t.amount)} added`);
   };
   if (edit) q('#tdel').onclick = () => confirmSheet('Delete this entry?', `${TYPE_LABEL[tx.type]} of ${inr(tx.amount)} on ${fmtDate(tx.date)} will be removed.`, 'Delete', async () => {
-    await DB.delTxn(tx.id); S.txns = S.txns.filter(x => x.id !== tx.id); render(); toast('Entry deleted');
+    txCol().doc(tx.id).delete().catch(e => toast(fail(e, 'Could not delete this entry.'))); S.txns = S.txns.filter(x => x.id !== tx.id); render(); toast('Entry deleted');
   });
 }
 
 /* ================= Boot ================= */
-addEventListener('online', () => S.user && render());
-addEventListener('offline', () => S.user && render());
-(async function boot(){
-  const sid = ls('kosh.session');
-  if (sid){ try{ const u = await DB.getUser(sid); if (u) return login(u); }catch(e){} }
-  renderLogin();
-})();
+addEventListener('online', updateBadge);
+addEventListener('offline', updateBadge);
+if (FB_OK){
+  renderLoading();
+  auth.onAuthStateChanged(fu => {
+    if (S.signingUp) return;
+    if (fu){ if (!S.user || S.user.uid !== fu.uid) startSession(fu); }
+    else { stopSync(); S.user = null; if (S.screen !== 'signup') renderLogin(); }
+  });
+} else renderLogin();
 if ('serviceWorker' in navigator){
   addEventListener('load', () => { try{ navigator.serviceWorker.register('sw.js').catch(()=>{}); }catch(e){} });
 }

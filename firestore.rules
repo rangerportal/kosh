@@ -1,0 +1,41 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Username -> owner. Anyone can check if a username exists; it can be claimed once and never changed.
+    match /usernames/{name} {
+      allow get: if true;
+      allow list: if false;
+      allow create: if request.auth != null
+        && request.resource.data.keys().hasOnly(['uid'])
+        && request.resource.data.uid == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    // Mobile -> username, so people can sign in with their mobile number. One account per mobile.
+    match /mobiles/{mobile} {
+      allow get: if true;
+      allow list: if false;
+      allow create: if request.auth != null
+        && mobile.matches('^[6-9][0-9]{9}$')
+        && request.resource.data.keys().hasOnly(['uid', 'username'])
+        && request.resource.data.uid == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    // Profile and entries: only the owner can read or write.
+    match /users/{uid} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+
+      match /txns/{id} {
+        allow read, delete: if request.auth != null && request.auth.uid == uid;
+        allow create, update: if request.auth != null && request.auth.uid == uid
+          && request.resource.data.type in ['credit', 'debit', 'expense']
+          && request.resource.data.amount is number
+          && request.resource.data.amount > 0
+          && request.resource.data.date is string
+          && request.resource.data.date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$');
+      }
+    }
+  }
+}

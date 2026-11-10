@@ -1,22 +1,18 @@
-KOSH MONEY BOOK — installable offline PWA
+KOSH MONEY BOOK v2 — cloud sync with Firebase + works offline
 
-HOW TO PUT IT ON YOUR PHONE
-A PWA must be served over https once, then it works fully offline.
-Easiest free options:
-  • Netlify Drop: open app.netlify.com/drop and drag this whole folder in.
-  • GitHub Pages: push these files to a repo, enable Pages.
-Then open the link in Chrome (Android) → menu → "Install app" / "Add to Home screen".
-On iPhone: open in Safari → Share → "Add to Home Screen".
+UPLOAD TO GITHUB
+Replace the files in your repo with these (Add file -> Upload files -> Commit).
+Then wait 1–2 minutes for GitHub Pages to rebuild.
 
-FILES
-  index.html            the whole app (UI, logic, storage)
-  manifest.json         app name, icons, standalone display
-  sw.js                 service worker: caches the app for offline use
-  icon-*.png            home-screen icons
+ONE-TIME FIREBASE SETUP (console.firebase.google.com -> project kosh-9edf3)
+1. Build -> Authentication -> Sign-in method -> enable "Email/Password".
+2. Build -> Firestore Database -> Rules tab -> delete everything there,
+   paste the contents of firestore.rules, click Publish.
 
-DATA & SECURITY
-  • Accounts and entries are stored in this phone's IndexedDB. Nothing is uploaded.
-  • Passwords are hashed with PBKDF2-SHA256 (150,000 rounds, random salt).
-  • Mobile number is validated (Indian 10-digit) and must be unique; no SMS OTP,
-    because an offline app has no server to send one.
-  • Back up from Profile → "Back up data" before clearing browser data or switching phones.
+HOW IT WORKS
+- Sign up (needs internet): name, mobile, username, password.
+- Sign in with username OR mobile number on any phone; your entries appear.
+- Offline: after signing in once, the app opens and saves entries without internet.
+  They sync automatically when you are back online ("Synced" badge at the top).
+- Passwords are handled by Firebase Authentication (never stored in the database).
+- Each user can only read their own entries (enforced by firestore.rules).
