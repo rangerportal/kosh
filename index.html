@@ -1,0 +1,912 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}[hidden]{display:none!important}</style>
+<title>Kosh Money Book</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="theme-color" content="#0B1412">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Kosh">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Manrope:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: phone-first single column, sticky top bar, faceted "gem" balance card,
+   bottom tab bar + floating add button. Gem colours encode money flow:
+   emerald = credit (in), garnet = debit (out), amethyst = expense, gold = accent. */
+:root{
+  --bg:#0B1412; --surface:#121E1B; --surface-2:#192824; --line:#253A34;
+  --fg:#E9F0EC; --muted:#8EA29A; --gold:#D9B66A; --gold-ink:#1A1405;
+  --credit:#4FD1A1; --debit:#F2836B; --expense:#B99BF5;
+  --card-a:#0F3B30; --card-b:#06201A; --card-fg:#F2F6F3;
+  --shadow:0 18px 40px -18px rgba(0,0,0,.6);
+  --f-display:"Bricolage Grotesque","Sora",ui-sans-serif,system-ui,sans-serif;
+  --f-body:"Manrope",ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --r:16px; --r-sm:11px;
+  color-scheme:dark;
+}
+@media (prefers-color-scheme: light){:root:not([data-theme="dark"]){
+  --bg:#EFF3F0; --surface:#FFFFFF; --surface-2:#F4F7F5; --line:#DCE5E0;
+  --fg:#10201B; --muted:#5B6F68; --gold:#9C7426; --gold-ink:#FFFFFF;
+  --credit:#0B8F62; --debit:#C8462F; --expense:#6E4FCB;
+  --card-a:#0F4A3B; --card-b:#082A22; --card-fg:#F2F6F3;
+  --shadow:0 16px 34px -20px rgba(16,32,27,.35);
+  color-scheme:light;
+}}
+:root[data-theme="light"]{
+  --bg:#EFF3F0; --surface:#FFFFFF; --surface-2:#F4F7F5; --line:#DCE5E0;
+  --fg:#10201B; --muted:#5B6F68; --gold:#9C7426; --gold-ink:#FFFFFF;
+  --credit:#0B8F62; --debit:#C8462F; --expense:#6E4FCB;
+  --card-a:#0F4A3B; --card-b:#082A22; --card-fg:#F2F6F3;
+  --shadow:0 16px 34px -20px rgba(16,32,27,.35);
+  color-scheme:light;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{background:var(--bg);color:var(--fg);font-family:var(--f-body);font-size:15px;line-height:1.45;-webkit-font-smoothing:antialiased;-webkit-tap-highlight-color:transparent}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:10;background:var(--bg)}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+.num{font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+.wrap{max-width:520px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+h1,h2,h3{font-family:var(--f-display);margin:0;text-wrap:balance;letter-spacing:-.02em}
+.eyebrow{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.muted{color:var(--muted)}
+
+/* ---------- Auth ---------- */
+.auth{min-height:100%;display:flex;flex-direction:column;justify-content:center;padding-block:32px}
+.brand{display:flex;align-items:center;gap:12px;margin-bottom:28px}
+.gem{width:44px;height:44px;flex:none}
+.brand h1{font-size:28px}
+.brand p{margin:0;color:var(--muted);font-size:13px}
+.auth h2{font-size:26px;margin-bottom:6px}
+.auth .lead{color:var(--muted);margin:0 0 22px}
+.steps{display:flex;gap:6px;margin-bottom:18px}
+.steps i{flex:1;height:4px;border-radius:4px;background:var(--line)}
+.steps i.on{background:var(--gold)}
+.field{display:flex;flex-direction:column;gap:6px;margin-bottom:14px}
+.field label{font-size:13px;font-weight:600;color:var(--muted)}
+.input{width:100%;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-sm);padding:13px 14px;outline:none;transition:border-color .15s}
+.input:focus{border-color:var(--gold)}
+.prefix{display:flex;align-items:stretch;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-sm);overflow:hidden}
+.prefix:focus-within{border-color:var(--gold)}
+.prefix span{display:flex;align-items:center;padding:0 12px;border-right:1px solid var(--line);color:var(--muted);font-weight:600}
+.prefix input{flex:1;min-width:0;border:0;background:transparent;padding:13px 14px;outline:none}
+.pw{position:relative}
+.pw button{position:absolute;right:6px;top:50%;transform:translateY(-50%);background:none;border:0;color:var(--muted);font-size:12px;font-weight:700;padding:8px}
+.meter{height:4px;border-radius:4px;background:var(--line);overflow:hidden;margin-top:2px}
+.meter b{display:block;height:100%;width:0;transition:width .25s,background .25s}
+.hint{font-size:12px;color:var(--muted)}
+.err{color:var(--debit);font-size:13px;min-height:18px;margin:2px 0 8px}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:0;border-radius:var(--r-sm);padding:14px 18px;font-weight:700;background:var(--gold);color:var(--gold-ink);width:100%;transition:transform .1s,filter .15s}
+.btn:active{transform:scale(.98)}
+.btn.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
+.btn.danger{background:transparent;color:var(--debit);border:1px solid color-mix(in srgb,var(--debit) 40%,transparent)}
+.btn[disabled]{opacity:.55;pointer-events:none}
+.row{display:flex;gap:10px}
+.switch{text-align:center;margin-top:18px;color:var(--muted);font-size:14px}
+.link{background:none;border:0;color:var(--gold);font-weight:700;padding:4px}
+.divider{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:12px;margin:16px 0}
+.divider::before,.divider::after{content:"";flex:1;height:1px;background:var(--line)}
+.note{font-size:12px;color:var(--muted);text-align:center;margin-top:18px}
+
+/* ---------- App shell ---------- */
+.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
+.top .wrap{display:flex;align-items:center;justify-content:space-between;padding-block:14px}
+.top h1{font-size:22px}
+.avatar{width:38px;height:38px;border-radius:50%;background:var(--surface-2);border:1px solid var(--line);display:grid;place-items:center;font-weight:700;color:var(--gold);font-family:var(--f-display)}
+main{padding-bottom:calc(110px + env(safe-area-inset-bottom,0px))}
+.stack{display:flex;flex-direction:column;gap:18px;padding-block:6px 20px}
+
+.tabs{position:fixed;left:0;right:0;bottom:0;z-index:6;background:var(--surface);border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom,0px);padding-left:env(safe-area-inset-left,0px);padding-right:env(safe-area-inset-right,0px)}
+.tabs .in{max-width:520px;margin:0 auto;display:grid;grid-template-columns:1fr 1fr 72px 1fr 1fr;align-items:center}
+.tab{background:none;border:0;display:flex;flex-direction:column;align-items:center;gap:3px;padding:10px 0 9px;font-size:11px;font-weight:600;color:var(--muted)}
+.tab svg{width:22px;height:22px}
+.tab.on{color:var(--fg)}
+.tab.on svg{color:var(--gold)}
+.fab{justify-self:center;width:56px;height:56px;border-radius:18px;border:0;background:var(--gold);color:var(--gold-ink);display:grid;place-items:center;margin-top:-26px;box-shadow:0 10px 24px -8px color-mix(in srgb,var(--gold) 70%,transparent)}
+.fab svg{width:26px;height:26px}
+
+/* ---------- Balance card (the one bold moment) ---------- */
+.vault{position:relative;overflow:hidden;border-radius:22px;padding:22px 20px 18px;color:var(--card-fg);background:
+  radial-gradient(120% 80% at 100% 0%,rgba(217,182,106,.22),transparent 55%),
+  linear-gradient(155deg,var(--card-a),var(--card-b));box-shadow:var(--shadow)}
+.vault::before{content:"";position:absolute;inset:0;background:
+  conic-gradient(from 210deg at 82% 18%,rgba(255,255,255,.10) 0 12deg,transparent 12deg 40deg,rgba(255,255,255,.06) 40deg 58deg,transparent 58deg 110deg,rgba(255,255,255,.08) 110deg 124deg,transparent 124deg);pointer-events:none}
+.vault::after{content:"";position:absolute;inset:0;border-radius:inherit;border:1px solid rgba(217,182,106,.35);pointer-events:none}
+.vault>*{position:relative}
+.vault .eyebrow{color:rgba(242,246,243,.7)}
+.vault .bal{font-family:var(--f-display);font-size:clamp(32px,10vw,42px);font-weight:700;margin:6px 0 2px;letter-spacing:-.03em}
+.vault .sub{font-size:12px;color:rgba(242,246,243,.7)}
+.vault .trio{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:18px;padding-top:14px;border-top:1px solid rgba(242,246,243,.14)}
+.vault .trio div{min-width:0}
+.vault .trio span{display:flex;align-items:center;gap:6px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:rgba(242,246,243,.72)}
+.vault .trio b{display:block;font-size:15px;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dot{width:7px;height:7px;border-radius:2px;transform:rotate(45deg);flex:none}
+.dot.c{background:#5FE0B0}.dot.d{background:#FF9A82}.dot.e{background:#C9B0FF}
+
+.quick{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.qa{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:12px 10px;display:flex;flex-direction:column;align-items:flex-start;gap:8px;text-align:left}
+.qa i{width:32px;height:32px;border-radius:10px;display:grid;place-items:center}
+.qa i svg{width:18px;height:18px}
+.qa b{font-size:14px}
+.qa small{font-size:11px;color:var(--muted);margin-top:-6px}
+.t-credit{color:var(--credit)}.t-debit{color:var(--debit)}.t-expense{color:var(--expense)}
+.bg-credit{background:color-mix(in srgb,var(--credit) 16%,transparent);color:var(--credit)}
+.bg-debit{background:color-mix(in srgb,var(--debit) 16%,transparent);color:var(--debit)}
+.bg-expense{background:color-mix(in srgb,var(--expense) 18%,transparent);color:var(--expense)}
+
+.sec-h{display:flex;align-items:baseline;justify-content:space-between}
+.sec-h h3{font-size:17px}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--r)}
+.month{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line);border-radius:var(--r);overflow:hidden;border:1px solid var(--line)}
+.month div{background:var(--surface);padding:12px 14px}
+.month span{font-size:12px;color:var(--muted)}
+.month b{display:block;font-size:17px;margin-top:2px}
+
+/* ---------- Transaction list ---------- */
+.list{display:flex;flex-direction:column}
+.tx{display:flex;align-items:center;gap:12px;padding:12px 14px;background:none;border:0;border-top:1px solid var(--line);width:100%;text-align:left}
+.list .tx:first-child{border-top:0}
+.tx i{width:38px;height:38px;border-radius:12px;display:grid;place-items:center;flex:none}
+.tx i svg{width:18px;height:18px}
+.tx .m{flex:1;min-width:0}
+.tx .m b{display:block;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tx .m small{display:block;color:var(--muted);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tx .a{font-weight:700;white-space:nowrap}
+.day-h{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);font-weight:600;padding:0 4px 6px}
+.empty{padding:28px 18px;text-align:center;color:var(--muted)}
+.empty b{display:block;color:var(--fg);font-family:var(--f-display);font-size:17px;margin-bottom:4px}
+
+.chips{display:flex;gap:8px;overflow-x:auto;scrollbar-width:none;padding-bottom:2px}
+.chips::-webkit-scrollbar{display:none}
+.chip{flex:none;border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:8px 14px;font-size:13px;font-weight:600;color:var(--muted)}
+.chip.on{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+.search{position:relative}
+.search svg{position:absolute;left:13px;top:50%;transform:translateY(-50%);width:18px;height:18px;color:var(--muted)}
+.search .input{padding-left:40px}
+
+/* ---------- Reports ---------- */
+.period{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.period b{font-family:var(--f-display);font-size:16px;text-align:center;flex:1}
+.iconbtn{width:38px;height:38px;border-radius:12px;border:1px solid var(--line);background:var(--surface);display:grid;place-items:center;flex:none}
+.iconbtn svg{width:18px;height:18px}
+.iconbtn[disabled]{opacity:.35}
+.custom{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.kpis{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.kpi{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:12px 14px;min-width:0}
+.kpi span{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);font-weight:600}
+.kpi b{display:block;font-size:18px;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kpi.net{grid-column:1/-1;display:flex;justify-content:space-between;align-items:center}
+.kpi.net b{margin:0}
+.chart{padding:14px 12px 8px}
+.chart svg{width:100%;height:auto;display:block}
+.chart .legend{display:flex;gap:14px;font-size:12px;color:var(--muted);padding:2px 4px 8px}
+.chart .legend span{display:flex;align-items:center;gap:6px}
+.ax{fill:var(--muted);font-size:9px;font-family:var(--f-body)}
+.grid{stroke:var(--line);stroke-width:1}
+.cats{padding:6px 14px 12px}
+.cat{padding:10px 0;border-top:1px solid var(--line)}
+.cat:first-child{border-top:0}
+.cat .l{display:flex;justify-content:space-between;font-size:14px;margin-bottom:6px}
+.cat .l span{color:var(--muted);font-size:12px;margin-left:6px}
+.bar{height:6px;border-radius:6px;background:var(--surface-2);overflow:hidden}
+.bar b{display:block;height:100%;border-radius:6px;background:var(--expense)}
+
+/* ---------- Profile ---------- */
+.who{display:flex;align-items:center;gap:14px;padding:16px}
+.who .avatar{width:54px;height:54px;font-size:22px}
+.who h2{font-size:20px}
+.menu{display:flex;flex-direction:column}
+.mi{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:14px 16px;border:0;border-top:1px solid var(--line);background:none;width:100%;text-align:left}
+.menu .mi:first-child{border-top:0}
+.mi span{font-weight:600}
+.mi small{color:var(--muted)}
+.seg{display:flex;background:var(--surface-2);border-radius:10px;padding:3px}
+.seg button{border:0;background:none;padding:6px 10px;border-radius:8px;font-size:12px;font-weight:700;color:var(--muted)}
+.seg button.on{background:var(--surface);color:var(--fg);box-shadow:0 1px 3px rgba(0,0,0,.15)}
+
+/* ---------- Sheet ---------- */
+.scrim{position:fixed;inset:0;z-index:20;background:rgba(3,8,7,.55);display:flex;align-items:flex-end;justify-content:center;animation:fade .2s ease}
+.sheet{width:100%;max-width:520px;max-height:92%;overflow:auto;background:var(--surface);border-radius:24px 24px 0 0;border:1px solid var(--line);border-bottom:0;padding:10px max(18px,env(safe-area-inset-right,0px)) calc(18px + env(safe-area-inset-bottom,0px)) max(18px,env(safe-area-inset-left,0px));animation:up .25s cubic-bezier(.2,.8,.2,1)}
+.grab{width:40px;height:4px;border-radius:4px;background:var(--line);margin:0 auto 14px}
+.sheet h3{font-size:20px;margin-bottom:14px}
+.types{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;background:var(--surface-2);padding:4px;border-radius:14px;margin-bottom:16px}
+.types button{border:0;background:none;border-radius:10px;padding:10px 4px;font-weight:700;font-size:14px;color:var(--muted)}
+.types button.on.credit{background:var(--credit);color:#04140E}
+.types button.on.debit{background:var(--debit);color:#1C0802}
+.types button.on.expense{background:var(--expense);color:#140A2E}
+.amount{display:flex;align-items:center;gap:6px;border-bottom:2px solid var(--line);padding:4px 2px 8px;margin-bottom:16px}
+.amount:focus-within{border-color:var(--gold)}
+.amount span{font-family:var(--f-display);font-size:30px;color:var(--muted)}
+.amount input{flex:1;min-width:0;border:0;background:none;outline:none;font-family:var(--f-display);font-size:36px;font-weight:700;font-variant-numeric:tabular-nums}
+.catgrid{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}
+.catgrid button{border:1px solid var(--line);background:var(--surface-2);border-radius:999px;padding:7px 12px;font-size:13px;font-weight:600;color:var(--muted)}
+.catgrid button.on{border-color:var(--gold);color:var(--fg);background:color-mix(in srgb,var(--gold) 14%,var(--surface))}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.confirm p{color:var(--muted);margin:0 0 18px}
+
+.toast{position:fixed;left:50%;bottom:calc(96px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:30;background:var(--fg);color:var(--bg);padding:10px 16px;border-radius:12px;font-weight:600;font-size:14px;max-width:calc(100% - 32px);animation:up .2s ease}
+.offline{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:700;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:4px 9px}
+.offline i{width:6px;height:6px;border-radius:50%;background:var(--credit)}
+@keyframes up{from{transform:translateY(16px);opacity:0}to{transform:none;opacity:1}}
+.toast{animation-name:toastIn}
+@keyframes toastIn{from{opacity:0;transform:translate(-50%,10px)}to{opacity:1;transform:translate(-50%,0)}}
+@keyframes fade{from{opacity:0}to{opacity:1}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+
+<div id="app"></div>
+
+<script>
+"use strict";
+/* ================= Icons ================= */
+const I = {
+  home:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></svg>',
+  list:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01"/></svg>',
+  chart:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>',
+  user:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg>',
+  plus:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
+  in:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 7 7 17M7 8v9h9"/></svg>',
+  out:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17 17 7M8 7h9v9"/></svg>',
+  bag:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M5 8h14l-1 12H6zM9 8V6a3 3 0 0 1 6 0v2"/></svg>',
+  left:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>',
+  right:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>',
+  search:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>',
+  gem:'<svg class="gem" viewBox="0 0 48 48"><defs><linearGradient id="gg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#E8C982"/><stop offset="1" stop-color="#A9802F"/></linearGradient></defs><path d="M14 6h20l10 12-20 24L4 18z" fill="url(#gg)"/><path d="M4 18h40M14 6l10 12 10-12M24 18v24M14 6 10 18M34 6l4 12" stroke="#0B1412" stroke-opacity=".35" stroke-width="1.4" fill="none"/></svg>'
+};
+const TYPE_ICON = {credit:I.in, debit:I.out, expense:I.bag};
+const TYPE_LABEL = {credit:'Credit', debit:'Debit', expense:'Expense'};
+const CATS = {
+  credit:['Salary','Business','Interest','Refund','Gift','Rent received','Other'],
+  debit:['Transfer','Loan EMI','Cash withdrawal','Investment','Lent','Credit card bill','Other'],
+  expense:['Food','Groceries','Transport','Shopping','Bills','Health','Education','Entertainment','Travel','Other']
+};
+const MODES = ['UPI','Cash','Card','Bank'];
+
+/* ================= Helpers ================= */
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const pad = n => String(n).padStart(2,'0');
+const ymd = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+const parse = s => { const [y,m,d] = s.split('-').map(Number); return new Date(y, m-1, d); };
+const addDays = (d,n) => { const x = new Date(d); x.setDate(x.getDate()+n); return x; };
+const today = () => { const t = new Date(); t.setHours(0,0,0,0); return t; };
+const MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const fmtDate = s => { const d = parse(s); return `${d.getDate()} ${MON[d.getMonth()]} ${d.getFullYear()}`; };
+const inr = (n, sign) => {
+  const v = Math.abs(n).toLocaleString('en-IN', {maximumFractionDigits:2, minimumFractionDigits: Math.abs(n)%1 ? 2 : 0});
+  return (sign && n < 0 ? '−' : '') + '₹' + v;
+};
+const shortInr = n => {
+  const a = Math.abs(n);
+  if (a >= 1e7) return '₹' + (n/1e7).toFixed(a>=1e8?0:1) + 'Cr';
+  if (a >= 1e5) return '₹' + (n/1e5).toFixed(a>=1e6?0:1) + 'L';
+  if (a >= 1e3) return '₹' + (n/1e3).toFixed(a>=1e4?0:1) + 'k';
+  return '₹' + Math.round(n);
+};
+const uid = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36)+Math.random().toString(36).slice(2));
+function ls(k, v){ try{ if (v === undefined) return localStorage.getItem(k); if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v); }catch(e){ return null; } }
+
+/* ================= Storage (IndexedDB with in-memory fallback) ================= */
+const DB = (() => {
+  let dbp = null, mem = null;
+  function open(){
+    if (dbp) return dbp;
+    dbp = new Promise((res) => {
+      try{
+        const r = indexedDB.open('kosh-db', 1);
+        r.onupgradeneeded = () => {
+          const db = r.result;
+          const u = db.createObjectStore('users', {keyPath:'id'});
+          u.createIndex('username','username',{unique:true});
+          u.createIndex('mobile','mobile',{unique:true});
+          const t = db.createObjectStore('txns', {keyPath:'id'});
+          t.createIndex('userId','userId');
+        };
+        r.onsuccess = () => res(r.result);
+        r.onerror = () => { mem = {users:[], txns:[]}; res(null); };
+      }catch(e){ mem = {users:[], txns:[]}; res(null); }
+    });
+    return dbp;
+  }
+  const req = r => new Promise((res, rej) => { r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+  async function store(name, mode){ const db = await open(); return db ? db.transaction(name, mode).objectStore(name) : null; }
+  return {
+    async getUserBy(field, value){
+      const s = await store('users','readonly');
+      if (!s) return mem.users.find(u => u[field] === value) || null;
+      return (await req(s.index(field).get(value))) || null;
+    },
+    async getUser(id){ const s = await store('users','readonly'); return s ? (await req(s.get(id))) || null : mem.users.find(u=>u.id===id) || null; },
+    async putUser(u){ const s = await store('users','readwrite'); if (!s){ mem.users = mem.users.filter(x=>x.id!==u.id).concat(u); return; } await req(s.put(u)); },
+    async txns(userId){
+      const s = await store('txns','readonly');
+      if (!s) return mem.txns.filter(t=>t.userId===userId);
+      return req(s.index('userId').getAll(userId));
+    },
+    async putTxn(t){ const s = await store('txns','readwrite'); if (!s){ mem.txns = mem.txns.filter(x=>x.id!==t.id).concat(t); return; } await req(s.put(t)); },
+    async putMany(list){
+      const db = await open();
+      if (!db){ list.forEach(t => { mem.txns = mem.txns.filter(x=>x.id!==t.id).concat(t); }); return; }
+      await new Promise((res, rej) => { const tx = db.transaction('txns','readwrite'); const s = tx.objectStore('txns'); list.forEach(t => s.put(t)); tx.oncomplete = res; tx.onerror = () => rej(tx.error); });
+    },
+    async delTxn(id){ const s = await store('txns','readwrite'); if (!s){ mem.txns = mem.txns.filter(x=>x.id!==id); return; } await req(s.delete(id)); },
+    async clearTxns(userId){ const list = await this.txns(userId); for (const t of list) await this.delTxn(t.id); },
+    persistent: async () => { try{ if (navigator.storage && navigator.storage.persist) await navigator.storage.persist(); }catch(e){} }
+  };
+})();
+
+/* ================= Password hashing (PBKDF2-SHA256, 150k rounds) ================= */
+const b64 = buf => btoa(String.fromCharCode(...new Uint8Array(buf)));
+async function hashPw(pw, saltB64){
+  const salt = saltB64 ? Uint8Array.from(atob(saltB64), c=>c.charCodeAt(0)) : crypto.getRandomValues(new Uint8Array(16));
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(pw), 'PBKDF2', false, ['deriveBits']);
+  const bits = await crypto.subtle.deriveBits({name:'PBKDF2', hash:'SHA-256', salt, iterations:150000}, key, 256);
+  return {salt: b64(salt), hash: b64(bits)};
+}
+function pwScore(pw){
+  let s = 0;
+  if (pw.length >= 8) s++; if (pw.length >= 12) s++;
+  if (/[a-z]/.test(pw) && /[A-Z]/.test(pw)) s++;
+  if (/\d/.test(pw)) s++; if (/[^A-Za-z0-9]/.test(pw)) s++;
+  return Math.min(s, 4);
+}
+
+/* ================= State ================= */
+const S = { user:null, txns:[], view:'home', filter:'all', q:'', rp:{preset:'month', off:0, from:'', to:''}, signup:{step:1, data:{}} };
+const app = $('#app');
+
+function applyTheme(){
+  const t = ls('kosh.theme') || 'system';
+  if (t === 'system') document.documentElement.removeAttribute('data-theme');
+  else document.documentElement.setAttribute('data-theme', t);
+  const dark = t === 'dark' || (t === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
+  const m = document.querySelector('meta[name="theme-color"]'); if (m) m.content = dark ? '#0B1412' : '#EFF3F0';
+}
+applyTheme();
+try{ matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme); }catch(e){}
+
+let toastT;
+function toast(msg){
+  document.querySelectorAll('.toast').forEach(n=>n.remove());
+  const n = document.createElement('div'); n.className='toast'; n.setAttribute('role','status'); n.textContent = msg;
+  document.body.appendChild(n); clearTimeout(toastT); toastT = setTimeout(()=>n.remove(), 2200);
+}
+
+/* ================= Auth screens ================= */
+function brand(){ return `<div class="brand">${I.gem}<div><h1>Kosh</h1><p>Your money book, kept on this phone</p></div></div>`; }
+
+function renderLogin(msg=''){
+  app.innerHTML = `<div class="wrap auth">
+    ${brand()}
+    <h2>Welcome back</h2>
+    <p class="lead">Sign in with your username or mobile number.</p>
+    <form id="lf" novalidate>
+      <div class="field"><label for="lid">Username or mobile</label><input class="input" id="lid" autocomplete="username" autocapitalize="off" required></div>
+      <div class="field"><label for="lpw">Password</label><div class="pw"><input class="input" id="lpw" type="password" autocomplete="current-password" required><button type="button" data-eye="lpw">SHOW</button></div></div>
+      <div class="err" id="lerr">${esc(msg)}</div>
+      <button class="btn" id="lbtn">Sign in</button>
+    </form>
+    <div class="divider">or</div>
+    <button class="btn ghost" id="demo">Try a demo account</button>
+    <div class="switch">New here? <button class="link" id="toSignup">Create an account</button></div>
+    <p class="note">Everything is stored only on this device. Nothing is uploaded.</p>
+  </div>`;
+  bindEyes();
+  $('#toSignup').onclick = () => { S.signup = {step:1, data:{}}; renderSignup(); };
+  $('#demo').onclick = startDemo;
+  $('#lf').onsubmit = async e => {
+    e.preventDefault();
+    const id = $('#lid').value.trim(), pw = $('#lpw').value;
+    if (!id || !pw) return $('#lerr').textContent = 'Enter your username or mobile and your password.';
+    $('#lbtn').disabled = true;
+    try{
+      const mob = id.replace(/\D/g,'').slice(-10);
+      let u = await DB.getUserBy('username', id.toLowerCase());
+      if (!u && /^\d{10}$/.test(mob)) u = await DB.getUserBy('mobile', mob);
+      if (!u){ $('#lerr').textContent = 'No account found with that username or mobile.'; $('#lbtn').disabled=false; return; }
+      const h = await hashPw(pw, u.salt);
+      if (h.hash !== u.hash){ $('#lerr').textContent = 'Incorrect password. Try again.'; $('#lbtn').disabled=false; return; }
+      await login(u);
+    }catch(err){ $('#lerr').textContent = 'Sign-in failed: this browser blocked secure storage. Open the app over https.'; $('#lbtn').disabled=false; }
+  };
+}
+
+function renderSignup(){
+  const st = S.signup, d = st.data;
+  const steps = `<div class="steps" aria-label="Step ${st.step} of 3"><i class="on"></i><i class="${st.step>1?'on':''}"></i><i class="${st.step>2?'on':''}"></i></div>`;
+  let body = '';
+  if (st.step === 1) body = `
+    <h2>Create your account</h2><p class="lead">Step 1 of 3 · Your name and mobile number</p>
+    <form id="sf" novalidate>
+      <div class="field"><label for="sname">Full name</label><input class="input" id="sname" autocomplete="name" value="${esc(d.name||'')}" placeholder="e.g. Priya Baruah"></div>
+      <div class="field"><label for="smob">Mobile number</label><div class="prefix"><span>+91</span><input id="smob" inputmode="numeric" autocomplete="tel-national" maxlength="10" value="${esc(d.mobile||'')}" placeholder="98765 43210"></div><span class="hint">10-digit Indian mobile number. You can sign in with it later.</span></div>
+      <div class="err" id="serr"></div>
+      <button class="btn">Continue</button>
+    </form>`;
+  if (st.step === 2) body = `
+    <h2>Choose a username</h2><p class="lead">Step 2 of 3 · Hi ${esc(d.name.split(' ')[0])}, pick how you'll sign in</p>
+    <form id="sf" novalidate>
+      <div class="field"><label for="suser">Username</label><input class="input" id="suser" autocapitalize="off" autocomplete="username" value="${esc(d.username||'')}" placeholder="priya.b"><span class="hint">4–20 characters: letters, numbers, dot or underscore.</span></div>
+      <div class="err" id="serr"></div>
+      <div class="row"><button type="button" class="btn ghost" id="back">Back</button><button class="btn">Continue</button></div>
+    </form>`;
+  if (st.step === 3) body = `
+    <h2>Set a password</h2><p class="lead">Step 3 of 3 · Protects your money book on this phone</p>
+    <form id="sf" novalidate>
+      <div class="field"><label for="spw">Password</label><div class="pw"><input class="input" id="spw" type="password" autocomplete="new-password"><button type="button" data-eye="spw">SHOW</button></div>
+        <div class="meter"><b id="pm"></b></div><span class="hint" id="ph">At least 8 characters with a number.</span></div>
+      <div class="field"><label for="spw2">Confirm password</label><input class="input" id="spw2" type="password" autocomplete="new-password"></div>
+      <div class="err" id="serr"></div>
+      <div class="row"><button type="button" class="btn ghost" id="back">Back</button><button class="btn" id="sbtn">Create account</button></div>
+    </form>`;
+  app.innerHTML = `<div class="wrap auth">${brand()}${steps}${body}
+    <div class="switch">Already have an account? <button class="link" id="toLogin">Sign in</button></div></div>`;
+  bindEyes();
+  $('#toLogin').onclick = () => renderLogin();
+  const back = $('#back'); if (back) back.onclick = () => { st.step--; renderSignup(); };
+  const err = m => $('#serr').textContent = m;
+  if (st.step === 1){
+    $('#smob').oninput = e => e.target.value = e.target.value.replace(/\D/g,'').slice(0,10);
+    $('#sname').focus();
+  }
+  if (st.step === 3){
+    $('#spw').oninput = e => {
+      const s = pwScore(e.target.value), cols = ['var(--debit)','var(--debit)','var(--gold)','var(--credit)','var(--credit)'];
+      $('#pm').style.width = (e.target.value ? (s+1)*20 : 0) + '%'; $('#pm').style.background = cols[s];
+      $('#ph').textContent = ['Too weak','Weak','Fair','Strong','Very strong'][s] + ' · at least 8 characters with a number.';
+    };
+  }
+  $('#sf').onsubmit = async e => {
+    e.preventDefault();
+    if (st.step === 1){
+      const name = $('#sname').value.trim().replace(/\s+/g,' '), mobile = $('#smob').value;
+      if (name.length < 2) return err('Enter your name (at least 2 letters).');
+      if (!/^[6-9]\d{9}$/.test(mobile)) return err('Enter a valid 10-digit mobile number starting with 6, 7, 8 or 9.');
+      if (await DB.getUserBy('mobile', mobile)) return err('This mobile number already has an account. Sign in instead.');
+      Object.assign(d, {name, mobile}); st.step = 2; return renderSignup();
+    }
+    if (st.step === 2){
+      const username = $('#suser').value.trim().toLowerCase();
+      if (!/^[a-z0-9._]{4,20}$/.test(username)) return err('Use 4–20 letters, numbers, dots or underscores.');
+      if (await DB.getUserBy('username', username)) return err('That username is taken. Try another.');
+      d.username = username; st.step = 3; return renderSignup();
+    }
+    const pw = $('#spw').value, pw2 = $('#spw2').value;
+    if (pw.length < 8 || !/\d/.test(pw)) return err('Password needs at least 8 characters including a number.');
+    if (pw !== pw2) return err('The two passwords do not match.');
+    $('#sbtn').disabled = true;
+    try{
+      const h = await hashPw(pw);
+      const u = {id:uid(), name:d.name, mobile:d.mobile, username:d.username, salt:h.salt, hash:h.hash, created:Date.now()};
+      await DB.putUser(u);
+      await DB.persistent();
+      await login(u, 'Account created. Welcome, ' + u.name.split(' ')[0] + '!');
+    }catch(ex){ err('Could not create account: secure storage is unavailable in this browser.'); $('#sbtn').disabled = false; }
+  };
+}
+
+function bindEyes(){
+  document.querySelectorAll('[data-eye]').forEach(b => b.onclick = () => {
+    const i = document.getElementById(b.dataset.eye); const show = i.type === 'password';
+    i.type = show ? 'text' : 'password'; b.textContent = show ? 'HIDE' : 'SHOW';
+  });
+}
+
+async function login(u, msg){
+  S.user = u; ls('kosh.session', u.id);
+  S.txns = await DB.txns(u.id);
+  S.view = 'home'; render();
+  if (msg) toast(msg);
+}
+function logout(){ S.user = null; S.txns = []; ls('kosh.session', null); renderLogin(); }
+
+async function startDemo(){
+  let u = await DB.getUserBy('username','demo');
+  if (!u){
+    const h = await hashPw('demo1234');
+    u = {id:uid(), name:'Demo User', mobile:'9000000000', username:'demo', salt:h.salt, hash:h.hash, created:Date.now(), demo:true};
+    await DB.putUser(u);
+    await DB.putMany(sampleTxns(u.id));
+  }
+  await login(u, 'Demo account · sample data (password: demo1234)');
+}
+function sampleTxns(userId){
+  const out = [], t = today();
+  const add = (daysAgo, type, amount, category, note, mode='UPI') =>
+    out.push({id:uid(), userId, type, amount, category, note, mode, date: ymd(addDays(t,-daysAgo)), created:Date.now()});
+  for (let m = 0; m < 12; m++){
+    const base = m*30;
+    add(base+ (t.getDate()>1? t.getDate()-1 : 0), 'credit', 68000 + (m%3)*1500, 'Salary', 'Monthly salary', 'Bank');
+    add(base+3, 'debit', 12500, 'Loan EMI', 'Home loan EMI', 'Bank');
+    add(base+5, 'debit', 5000, 'Investment', 'SIP – index fund', 'Bank');
+    add(base+2, 'expense', 3200 + (m*137)%900, 'Groceries', 'Weekly groceries');
+    add(base+9, 'expense', 1850 + (m*91)%600, 'Bills', 'Electricity and broadband');
+    add(base+12, 'expense', 640 + (m*53)%400, 'Food', 'Dinner out');
+    add(base+15, 'expense', 900 + (m*71)%500, 'Transport', 'Fuel');
+    add(base+19, 'expense', 2400 + (m*211)%3000, 'Shopping', 'Clothes and household');
+    if (m % 2 === 0) add(base+22, 'credit', 4200, 'Business', 'Freelance design work');
+    if (m % 4 === 1) add(base+25, 'expense', 1500, 'Health', 'Pharmacy and checkup', 'Card');
+    if (m === 4) add(base+8, 'expense', 14800, 'Travel', 'Trip to Shillong', 'Card');
+  }
+  add(0,'expense',180,'Food','Tea and snacks','Cash');
+  add(1,'debit',2000,'Cash withdrawal','ATM','Cash');
+  add(1,'credit',350,'Refund','Order refund');
+  return out;
+}
+
+/* ================= Totals ================= */
+function totals(list){
+  const r = {credit:0, debit:0, expense:0};
+  for (const t of list) r[t.type] += t.amount;
+  r.out = r.debit + r.expense; r.net = r.credit - r.out;
+  return r;
+}
+const inRange = (list, a, b) => list.filter(t => t.date >= a && t.date <= b);
+const sorted = list => list.slice().sort((x,y) => y.date.localeCompare(x.date) || (y.created||0) - (x.created||0));
+
+/* ================= Shell ================= */
+const TITLES = {home:'', txns:'Transactions', reports:'Reports', profile:'Profile'};
+function render(){
+  if (!S.user) return renderLogin();
+  const v = S.view;
+  const initials = S.user.name.split(' ').map(w=>w[0]).slice(0,2).join('').toUpperCase();
+  const greet = (() => { const h = new Date().getHours(); return h<12?'Good morning':h<17?'Good afternoon':'Good evening'; })();
+  app.innerHTML = `
+    <header class="top"><div class="wrap">
+      ${v==='home' ? `<div><div class="eyebrow">${greet}</div><h1>${esc(S.user.name.split(' ')[0])}</h1></div>` : `<h1>${TITLES[v]}</h1>`}
+      <div class="row" style="align-items:center"><span class="offline" title="Works without internet"><i></i>${navigator.onLine?'Saved on device':'Offline'}</span>
+      <button class="avatar" data-go="profile" aria-label="Profile">${esc(initials)}</button></div>
+    </div></header>
+    <main><div class="wrap stack" id="view"></div></main>
+    <nav class="tabs" aria-label="Main"><div class="in">
+      ${tabBtn('home','Home',I.home)}${tabBtn('txns','History',I.list)}
+      <button class="fab" id="fab" aria-label="Add transaction">${I.plus}</button>
+      ${tabBtn('reports','Reports',I.chart)}${tabBtn('profile','Profile',I.user)}
+    </div></nav>`;
+  document.querySelectorAll('[data-go]').forEach(b => b.onclick = () => { S.view = b.dataset.go; render(); window.scrollTo(0,0); });
+  $('#fab').onclick = () => openTxn();
+  ({home:viewHome, txns:viewTxns, reports:viewReports, profile:viewProfile})[v]();
+}
+const tabBtn = (k,l,ic) => `<button class="tab ${S.view===k?'on':''}" data-go="${k}" ${S.view===k?'aria-current="page"':''}>${ic}${l}</button>`;
+
+function txRow(t){
+  const sign = t.type === 'credit' ? '+' : '−';
+  return `<button class="tx" data-tx="${t.id}">
+    <i class="bg-${t.type}">${TYPE_ICON[t.type]}</i>
+    <span class="m"><b>${esc(t.note || t.category)}</b><small>${esc(t.category)} · ${esc(t.mode||'')} · ${fmtDate(t.date)}</small></span>
+    <span class="a num t-${t.type}">${sign}${inr(t.amount)}</span></button>`;
+}
+function bindTx(root){ root.querySelectorAll('[data-tx]').forEach(b => b.onclick = () => openTxn(S.txns.find(t=>t.id===b.dataset.tx))); }
+
+/* ================= Home ================= */
+function viewHome(){
+  const all = totals(S.txns);
+  const t = today(), mStart = ymd(new Date(t.getFullYear(), t.getMonth(), 1)), mEnd = ymd(new Date(t.getFullYear(), t.getMonth()+1, 0));
+  const mon = totals(inRange(S.txns, mStart, mEnd));
+  const recent = sorted(S.txns).slice(0,6);
+  const v = $('#view');
+  v.innerHTML = `
+    <section class="vault" aria-label="Balance">
+      <div class="eyebrow">Net balance · all time</div>
+      <div class="bal num">${inr(all.net, true)}</div>
+      <div class="sub">${S.txns.length} entries recorded</div>
+      <div class="trio">
+        <div><span><i class="dot c"></i>Credit</span><b class="num">${inr(all.credit)}</b></div>
+        <div><span><i class="dot d"></i>Debit</span><b class="num">${inr(all.debit)}</b></div>
+        <div><span><i class="dot e"></i>Expense</span><b class="num">${inr(all.expense)}</b></div>
+      </div>
+    </section>
+    <div class="quick">
+      <button class="qa" data-add="credit"><i class="bg-credit">${I.in}</i><b>Credit</b><small>Money in</small></button>
+      <button class="qa" data-add="debit"><i class="bg-debit">${I.out}</i><b>Debit</b><small>Paid out</small></button>
+      <button class="qa" data-add="expense"><i class="bg-expense">${I.bag}</i><b>Expense</b><small>Spending</small></button>
+    </div>
+    <section>
+      <div class="sec-h" style="margin-bottom:10px"><h3>${MON[t.getMonth()]} ${t.getFullYear()}</h3><button class="link" data-go2="reports">Full report</button></div>
+      <div class="month">
+        <div><span>Credit</span><b class="num t-credit">${inr(mon.credit)}</b></div>
+        <div><span>Debit</span><b class="num t-debit">${inr(mon.debit)}</b></div>
+        <div><span>Expense</span><b class="num t-expense">${inr(mon.expense)}</b></div>
+        <div><span>Saved this month</span><b class="num">${inr(mon.net, true)}</b></div>
+      </div>
+    </section>
+    <section>
+      <div class="sec-h" style="margin-bottom:10px"><h3>Recent</h3>${recent.length?'<button class="link" data-go2="txns">See all</button>':''}</div>
+      <div class="panel list">${recent.length ? recent.map(txRow).join('') :
+        `<div class="empty"><b>No entries yet</b>Tap the + button to record your first credit, debit or expense.</div>`}</div>
+    </section>`;
+  v.querySelectorAll('[data-add]').forEach(b => b.onclick = () => openTxn(null, b.dataset.add));
+  v.querySelectorAll('[data-go2]').forEach(b => b.onclick = () => { S.view = b.dataset.go2; render(); });
+  bindTx(v);
+}
+
+/* ================= Transactions ================= */
+function viewTxns(){
+  const v = $('#view');
+  v.innerHTML = `
+    <div class="search">${I.search}<input class="input" id="q" placeholder="Search notes or categories" value="${esc(S.q)}" aria-label="Search"></div>
+    <div class="chips" role="tablist">${['all','credit','debit','expense'].map(k=>`<button class="chip ${S.filter===k?'on':''}" data-f="${k}">${k==='all'?'All':TYPE_LABEL[k]}</button>`).join('')}</div>
+    <div id="tl"></div>`;
+  v.querySelectorAll('[data-f]').forEach(b => b.onclick = () => { S.filter = b.dataset.f; viewTxns(); });
+  $('#q').oninput = e => { S.q = e.target.value; drawList(); };
+  drawList();
+  function drawList(){
+    const q = S.q.trim().toLowerCase();
+    const list = sorted(S.txns).filter(t => (S.filter==='all' || t.type===S.filter) && (!q || (t.note+' '+t.category+' '+t.mode).toLowerCase().includes(q)));
+    const tl = $('#tl');
+    if (!list.length){ tl.innerHTML = `<div class="panel empty"><b>Nothing here</b>${S.txns.length?'No entries match this search or filter.':'Add your first entry with the + button.'}</div>`; return; }
+    const groups = {}; list.forEach(t => (groups[t.date] = groups[t.date] || []).push(t));
+    const tk = ymd(today()), yk = ymd(addDays(today(),-1));
+    tl.innerHTML = `<div class="stack" style="padding:0;gap:14px">${Object.entries(groups).map(([d, arr]) => {
+      const tt = totals(arr);
+      return `<section><div class="day-h"><span>${d===tk?'Today':d===yk?'Yesterday':fmtDate(d)}</span><span class="num">${inr(tt.net,true)}</span></div>
+        <div class="panel list">${arr.map(txRow).join('')}</div></section>`;
+    }).join('')}</div>`;
+    bindTx(tl);
+  }
+}
+
+/* ================= Reports ================= */
+function reportRange(){
+  const {preset, off} = S.rp, t = today(), y = t.getFullYear(), m = t.getMonth();
+  if (preset === 'week'){
+    const dow = (t.getDay()+6)%7; const s = addDays(t, -dow + off*7);
+    return {a:s, b:addDays(s,6), label: `${s.getDate()} ${MON[s.getMonth()]} – ${addDays(s,6).getDate()} ${MON[addDays(s,6).getMonth()]}`, unit:'day'};
+  }
+  if (preset === 'month'){ const s = new Date(y, m+off, 1); return {a:s, b:new Date(y, m+off+1, 0), label:`${MON[s.getMonth()]} ${s.getFullYear()}`, unit:'day'}; }
+  if (preset === '6m'){ const s = new Date(y, m+off*6-5, 1), e = new Date(y, m+off*6+1, 0); return {a:s, b:e, label:`${MON[s.getMonth()]} ${s.getFullYear()} – ${MON[e.getMonth()]} ${e.getFullYear()}`, unit:'month'}; }
+  if (preset === 'year'){ const s = new Date(y, m+off*12-11, 1), e = new Date(y, m+off*12+1, 0); return {a:s, b:e, label:`${MON[s.getMonth()]} ${s.getFullYear()} – ${MON[e.getMonth()]} ${e.getFullYear()}`, unit:'month'}; }
+  let a = S.rp.from ? parse(S.rp.from) : new Date(y, m, 1), b = S.rp.to ? parse(S.rp.to) : t;
+  if (a > b) [a, b] = [b, a];
+  const days = Math.round((b - a)/864e5) + 1;
+  return {a, b, label:`${fmtDate(ymd(a))} – ${fmtDate(ymd(b))}`, unit: days <= 31 ? 'day' : days <= 120 ? 'week' : 'month'};
+}
+function buckets(r, list){
+  const out = [];
+  if (r.unit === 'day'){
+    for (let d = new Date(r.a); d <= r.b; d = addDays(d,1)) out.push({a:ymd(d), b:ymd(d), lbl: String(d.getDate())});
+  } else if (r.unit === 'week'){
+    for (let d = new Date(r.a); d <= r.b; d = addDays(d,7)){ const e = addDays(d,6) > r.b ? r.b : addDays(d,6); out.push({a:ymd(d), b:ymd(e), lbl:`${d.getDate()} ${MON[d.getMonth()]}`}); }
+  } else {
+    for (let d = new Date(r.a.getFullYear(), r.a.getMonth(), 1); d <= r.b; d = new Date(d.getFullYear(), d.getMonth()+1, 1)){
+      const e = new Date(d.getFullYear(), d.getMonth()+1, 0);
+      out.push({a: ymd(d < r.a ? r.a : d), b: ymd(e > r.b ? r.b : e), lbl: MON[d.getMonth()]});
+    }
+  }
+  out.forEach(k => Object.assign(k, totals(inRange(list, k.a, k.b))));
+  return out;
+}
+function chartSVG(bs){
+  const W = 340, H = 190, L = 34, R = 6, T = 10, B = 24, cw = W-L-R, ch = H-T-B;
+  const max = Math.max(1, ...bs.map(b => Math.max(b.credit, b.out)));
+  const step = niceStep(max/3); const top = Math.ceil(max/step)*step;
+  const y = v => T + ch - (v/top)*ch;
+  const n = bs.length, slot = cw/n, bw = Math.max(1.5, Math.min(14, slot*0.36));
+  const every = n > 16 ? Math.ceil(n/8) : 1;
+  let g = '';
+  for (let v = 0; v <= top + 1e-9; v += step) g += `<line class="grid" x1="${L}" x2="${W-R}" y1="${y(v)}" y2="${y(v)}"/><text class="ax" x="${L-5}" y="${y(v)+3}" text-anchor="end">${shortInr(v).replace('₹','')}</text>`;
+  bs.forEach((b,i) => {
+    const cx = L + slot*i + slot/2;
+    if (b.credit) g += `<rect x="${cx-bw-0.5}" y="${y(b.credit)}" width="${bw}" height="${Math.max(1, T+ch-y(b.credit))}" rx="${Math.min(3,bw/2)}" fill="var(--credit)"><title>${b.lbl}: credit ${inr(b.credit)}</title></rect>`;
+    if (b.out) g += `<rect x="${cx+0.5}" y="${y(b.out)}" width="${bw}" height="${Math.max(1, T+ch-y(b.out))}" rx="${Math.min(3,bw/2)}" fill="var(--debit)"><title>${b.lbl}: spent ${inr(b.out)}</title></rect>`;
+    if (i % every === 0) g += `<text class="ax" x="${cx}" y="${H-8}" text-anchor="middle">${b.lbl}</text>`;
+  });
+  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Credit versus money out per period">${g}</svg>`;
+}
+function niceStep(x){ const p = Math.pow(10, Math.floor(Math.log10(x||1))); const f = x/p; return (f<=1?1:f<=2?2:f<=5?5:10)*p; }
+
+function viewReports(){
+  const v = $('#view'), rp = S.rp;
+  if (rp.preset === 'custom' && !rp.from){ const t = today(); rp.from = ymd(new Date(t.getFullYear(), t.getMonth(), 1)); rp.to = ymd(t); }
+  const r = reportRange();
+  const list = inRange(S.txns, ymd(r.a), ymd(r.b));
+  const tt = totals(list);
+  const bs = buckets(r, list);
+  const cats = {}; list.filter(t=>t.type==='expense').forEach(t => cats[t.category] = (cats[t.category]||0) + t.amount);
+  const catList = Object.entries(cats).sort((a,b)=>b[1]-a[1]);
+  const isFuture = rp.off >= 0;
+  const presets = [['week','Week'],['month','Month'],['6m','6 months'],['year','1 year'],['custom','Custom']];
+  v.innerHTML = `
+    <div class="chips">${presets.map(([k,l]) => `<button class="chip ${rp.preset===k?'on':''}" data-p="${k}">${l}</button>`).join('')}</div>
+    ${rp.preset === 'custom' ? `<div class="custom">
+        <div class="field" style="margin:0"><label for="rf">From</label><input class="input" type="date" id="rf" value="${rp.from}"></div>
+        <div class="field" style="margin:0"><label for="rt">To</label><input class="input" type="date" id="rt" value="${rp.to}"></div></div>`
+      : `<div class="period"><button class="iconbtn" id="prev" aria-label="Previous period">${I.left}</button><b>${r.label}</b><button class="iconbtn" id="next" aria-label="Next period" ${isFuture?'disabled':''}>${I.right}</button></div>`}
+    <div class="kpis">
+      <div class="kpi"><span><i class="dot c"></i>Total credit</span><b class="num t-credit">${inr(tt.credit)}</b></div>
+      <div class="kpi"><span><i class="dot d"></i>Total debit</span><b class="num t-debit">${inr(tt.debit)}</b></div>
+      <div class="kpi"><span><i class="dot e"></i>Total expense</span><b class="num t-expense">${inr(tt.expense)}</b></div>
+      <div class="kpi"><span>Money out</span><b class="num">${inr(tt.out)}</b></div>
+      <div class="kpi net"><span>Net for this period · ${list.length} entries</span><b class="num ${tt.net>=0?'t-credit':'t-debit'}">${inr(tt.net,true)}</b></div>
+    </div>
+    <section class="panel chart">
+      <div class="legend"><span><i class="dot" style="background:var(--credit)"></i>Credit</span><span><i class="dot" style="background:var(--debit)"></i>Debit + expense</span><span style="margin-left:auto">by ${r.unit}</span></div>
+      ${list.length ? chartSVG(bs) : '<div class="empty"><b>No entries in this period</b>Pick another period or add an entry.</div>'}
+    </section>
+    <section>
+      <div class="sec-h" style="margin-bottom:10px"><h3>Where the money went</h3><span class="muted" style="font-size:12px">Expenses</span></div>
+      <div class="panel cats">${catList.length ? catList.map(([c,a]) => `<div class="cat"><div class="l"><b>${esc(c)}<span>${Math.round(a/tt.expense*100)}%</span></b><b class="num">${inr(a)}</b></div><div class="bar"><b style="width:${(a/catList[0][1]*100).toFixed(1)}%"></b></div></div>`).join('')
+        : '<div class="empty" style="padding:16px">No expenses in this period.</div>'}</div>
+    </section>
+    <button class="btn ghost" id="csv">Export this report (CSV)</button>
+    <section>
+      <div class="sec-h" style="margin-bottom:10px"><h3>Entries</h3><span class="muted" style="font-size:12px">${list.length}</span></div>
+      <div class="panel list">${list.length ? sorted(list).slice(0,50).map(txRow).join('') : '<div class="empty" style="padding:16px">No entries.</div>'}</div>
+      ${list.length>50?`<p class="hint" style="text-align:center">Showing latest 50 of ${list.length}. The CSV export includes all.</p>`:''}
+    </section>`;
+  v.querySelectorAll('[data-p]').forEach(b => b.onclick = () => { rp.preset = b.dataset.p; rp.off = 0; viewReports(); });
+  if ($('#prev')){ $('#prev').onclick = () => { rp.off--; viewReports(); }; $('#next').onclick = () => { if (rp.off<0){ rp.off++; viewReports(); } }; }
+  if ($('#rf')){ $('#rf').onchange = e => { rp.from = e.target.value; viewReports(); }; $('#rt').onchange = e => { rp.to = e.target.value; viewReports(); }; }
+  $('#csv').onclick = () => downloadCSV(sorted(list), `kosh-report-${ymd(r.a)}-to-${ymd(r.b)}.csv`);
+  bindTx(v);
+}
+
+function downloadCSV(list, name){
+  const rows = [['Date','Type','Category','Note','Mode','Amount']].concat(list.map(t => [t.date, TYPE_LABEL[t.type], t.category, t.note||'', t.mode||'', (t.type==='credit'?'':'-') + t.amount]));
+  saveFile(rows.map(r => r.map(c => `"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n'), name, 'text/csv');
+}
+function saveFile(text, name, type){
+  try{
+    const url = URL.createObjectURL(new Blob(['﻿'+text], {type}));
+    const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+    toast('Saved ' + name);
+  }catch(e){ toast('Downloads are blocked here. Install the app to export.'); }
+}
+
+/* ================= Profile ================= */
+function viewProfile(){
+  const u = S.user, all = totals(S.txns), theme = ls('kosh.theme') || 'system';
+  const v = $('#view');
+  v.innerHTML = `
+    <section class="panel who"><div class="avatar">${esc(u.name[0].toUpperCase())}</div>
+      <div style="min-width:0"><h2>${esc(u.name)}</h2><div class="muted" style="font-size:13px">@${esc(u.username)} · +91 ${esc(u.mobile.slice(0,5))} ${esc(u.mobile.slice(5))}</div>
+      <div class="muted" style="font-size:12px">Member since ${fmtDate(ymd(new Date(u.created)))}</div></div></section>
+    <div class="month">
+      <div><span>Total credit</span><b class="num t-credit">${inr(all.credit)}</b></div>
+      <div><span>Total debit</span><b class="num t-debit">${inr(all.debit)}</b></div>
+      <div><span>Total expense</span><b class="num t-expense">${inr(all.expense)}</b></div>
+      <div><span>Entries</span><b class="num">${S.txns.length}</b></div>
+    </div>
+    <section class="panel menu">
+      <div class="mi"><span>Appearance</span><div class="seg">${['system','light','dark'].map(t=>`<button class="${theme===t?'on':''}" data-th="${t}">${t[0].toUpperCase()+t.slice(1)}</button>`).join('')}</div></div>
+      <button class="mi" id="cpw"><span>Change password</span><small>›</small></button>
+      <button class="mi" id="exp"><span>Export all entries</span><small>CSV</small></button>
+      <button class="mi" id="bak"><span>Back up data</span><small>JSON file</small></button>
+      <label class="mi" for="imp" style="cursor:pointer"><span>Restore from backup</span><small>JSON file</small></label>
+      <input type="file" id="imp" accept="application/json,.json" hidden>
+      <button class="mi" id="wipe"><span class="t-debit">Delete all entries</span><small>›</small></button>
+    </section>
+    <button class="btn ghost" id="out">Sign out</button>
+    <p class="note">Kosh works fully offline. Your account and entries live only in this phone's storage, so back up before clearing browser data or changing phones.</p>`;
+  v.querySelectorAll('[data-th]').forEach(b => b.onclick = () => { ls('kosh.theme', b.dataset.th); applyTheme(); viewProfile(); });
+  $('#out').onclick = logout;
+  $('#exp').onclick = () => downloadCSV(sorted(S.txns), `kosh-all-${ymd(today())}.csv`);
+  $('#bak').onclick = () => saveFile(JSON.stringify({app:'kosh', v:1, exported:new Date().toISOString(), txns:S.txns.map(({userId,...t})=>t)}, null, 1), `kosh-backup-${ymd(today())}.json`, 'application/json');
+  $('#imp').onchange = async e => {
+    const f = e.target.files[0]; if (!f) return;
+    try{
+      const data = JSON.parse(await f.text());
+      if (data.app !== 'kosh' || !Array.isArray(data.txns)) throw 0;
+      const have = new Set(S.txns.map(t=>t.id));
+      const add = data.txns.filter(t => t && !have.has(t.id) && TYPE_LABEL[t.type] && t.amount > 0 && /^\d{4}-\d{2}-\d{2}$/.test(t.date)).map(t => ({...t, userId:S.user.id}));
+      await DB.putMany(add); S.txns = await DB.txns(S.user.id);
+      toast(`Restored ${add.length} entries`); viewProfile();
+    }catch(x){ toast('That file is not a Kosh backup.'); }
+  };
+  $('#wipe').onclick = () => confirmSheet('Delete all entries?', `This removes all ${S.txns.length} entries from this phone. It can't be undone unless you have a backup.`, 'Delete everything', async () => {
+    await DB.clearTxns(S.user.id); S.txns = []; toast('All entries deleted'); viewProfile();
+  });
+  $('#cpw').onclick = changePw;
+}
+
+function changePw(){
+  const sc = sheet(`<h3>Change password</h3>
+    <form id="cf" novalidate>
+      <div class="field"><label for="c0">Current password</label><input class="input" type="password" id="c0" autocomplete="current-password"></div>
+      <div class="field"><label for="c1">New password</label><input class="input" type="password" id="c1" autocomplete="new-password"><span class="hint">At least 8 characters with a number.</span></div>
+      <div class="field"><label for="c2">Confirm new password</label><input class="input" type="password" id="c2" autocomplete="new-password"></div>
+      <div class="err" id="cerr"></div>
+      <button class="btn">Update password</button></form>`);
+  sc.querySelector('#cf').onsubmit = async e => {
+    e.preventDefault();
+    const err = m => sc.querySelector('#cerr').textContent = m;
+    const c0 = sc.querySelector('#c0').value, c1 = sc.querySelector('#c1').value, c2 = sc.querySelector('#c2').value;
+    if ((await hashPw(c0, S.user.salt)).hash !== S.user.hash) return err('Current password is incorrect.');
+    if (c1.length < 8 || !/\d/.test(c1)) return err('New password needs at least 8 characters including a number.');
+    if (c1 !== c2) return err('The new passwords do not match.');
+    const h = await hashPw(c1); Object.assign(S.user, {salt:h.salt, hash:h.hash, demo:false}); await DB.putUser(S.user);
+    closeSheet(); toast('Password updated');
+  };
+}
+
+/* ================= Sheets ================= */
+function sheet(html){
+  closeSheet();
+  const sc = document.createElement('div'); sc.className = 'scrim'; sc.id = 'scrim';
+  sc.innerHTML = `<div class="sheet" role="dialog" aria-modal="true"><div class="grab"></div>${html}</div>`;
+  sc.onclick = e => { if (e.target === sc) closeSheet(); };
+  document.body.appendChild(sc); document.body.style.overflow = 'hidden';
+  return sc;
+}
+function closeSheet(){ const s = $('#scrim'); if (s) s.remove(); document.body.style.overflow = ''; }
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeSheet(); });
+
+function confirmSheet(title, msg, label, fn){
+  const sc = sheet(`<div class="confirm"><h3>${esc(title)}</h3><p>${esc(msg)}</p><div class="row"><button class="btn ghost" id="cn">Cancel</button><button class="btn danger" id="cy">${esc(label)}</button></div></div>`);
+  sc.querySelector('#cn').onclick = closeSheet;
+  sc.querySelector('#cy').onclick = async () => { closeSheet(); await fn(); };
+}
+
+function openTxn(tx, presetType){
+  const edit = !!tx;
+  const f = edit ? {...tx} : {type: presetType || 'expense', amount:'', category:'', note:'', mode:'UPI', date: ymd(today())};
+  const sc = sheet(`<h3>${edit?'Edit entry':'New entry'}</h3>
+    <form id="tf" novalidate>
+      <div class="types" role="radiogroup" aria-label="Type">${['credit','debit','expense'].map(k=>`<button type="button" class="${k}" data-ty="${k}" role="radio">${TYPE_LABEL[k]}</button>`).join('')}</div>
+      <div class="amount"><span>₹</span><input id="tamt" inputmode="decimal" placeholder="0" aria-label="Amount" value="${f.amount||''}"></div>
+      <div class="field"><label>Category</label><div class="catgrid" id="tcats"></div></div>
+      <div class="field"><label for="tnote">Note</label><input class="input" id="tnote" maxlength="80" placeholder="What was it for?" value="${esc(f.note)}"></div>
+      <div class="two">
+        <div class="field"><label for="tdate">Date</label><input class="input" type="date" id="tdate" value="${f.date}" max="${ymd(addDays(today(),366))}"></div>
+        <div class="field"><label for="tmode">Paid via</label><select class="input" id="tmode">${MODES.map(m=>`<option ${f.mode===m?'selected':''}>${m}</option>`).join('')}</select></div>
+      </div>
+      <div class="err" id="terr"></div>
+      <button class="btn" id="tsave">${edit?'Save changes':'Add entry'}</button>
+      ${edit?'<button type="button" class="btn danger" id="tdel" style="margin-top:10px">Delete entry</button>':''}
+    </form>`);
+  const q = s => sc.querySelector(s);
+  function paint(){
+    sc.querySelectorAll('[data-ty]').forEach(b => { const on = b.dataset.ty === f.type; b.classList.toggle('on', on); b.setAttribute('aria-checked', on); });
+    if (!CATS[f.type].includes(f.category)) f.category = CATS[f.type][0];
+    q('#tcats').innerHTML = CATS[f.type].map(c => `<button type="button" class="${c===f.category?'on':''}" data-c="${esc(c)}">${esc(c)}</button>`).join('');
+    q('#tcats').querySelectorAll('[data-c]').forEach(b => b.onclick = () => { f.category = b.dataset.c; paint(); });
+    q('#tsave').textContent = edit ? 'Save changes' : 'Add ' + TYPE_LABEL[f.type].toLowerCase();
+  }
+  sc.querySelectorAll('[data-ty]').forEach(b => b.onclick = () => { f.type = b.dataset.ty; paint(); });
+  q('#tamt').oninput = e => { let v = e.target.value.replace(/[^\d.]/g,''); const p = v.split('.'); if (p.length>2) v = p[0]+'.'+p.slice(1).join(''); if (p[1]&&p[1].length>2) v = p[0]+'.'+p[1].slice(0,2); e.target.value = v; };
+  paint();
+  if (!edit) setTimeout(() => q('#tamt').focus(), 60);
+  q('#tf').onsubmit = async e => {
+    e.preventDefault();
+    const amount = Math.round(parseFloat(q('#tamt').value)*100)/100;
+    if (!(amount > 0)) return q('#terr').textContent = 'Enter an amount greater than zero.';
+    if (amount > 1e10) return q('#terr').textContent = 'That amount is too large.';
+    const date = q('#tdate').value; if (!date) return q('#terr').textContent = 'Pick a date.';
+    const t = {...f, amount, date, note:q('#tnote').value.trim(), mode:q('#tmode').value, userId:S.user.id, id: f.id || uid(), created: f.created || Date.now(), updated: Date.now()};
+    await DB.putTxn(t);
+    S.txns = S.txns.filter(x => x.id !== t.id).concat(t);
+    closeSheet(); render();
+    toast(edit ? 'Entry updated' : `${TYPE_LABEL[t.type]} of ${inr(t.amount)} added`);
+  };
+  if (edit) q('#tdel').onclick = () => confirmSheet('Delete this entry?', `${TYPE_LABEL[tx.type]} of ${inr(tx.amount)} on ${fmtDate(tx.date)} will be removed.`, 'Delete', async () => {
+    await DB.delTxn(tx.id); S.txns = S.txns.filter(x => x.id !== tx.id); render(); toast('Entry deleted');
+  });
+}
+
+/* ================= Boot ================= */
+addEventListener('online', () => S.user && render());
+addEventListener('offline', () => S.user && render());
+(async function boot(){
+  const sid = ls('kosh.session');
+  if (sid){ try{ const u = await DB.getUser(sid); if (u) return login(u); }catch(e){} }
+  renderLogin();
+})();
+if ('serviceWorker' in navigator){
+  addEventListener('load', () => { try{ navigator.serviceWorker.register('sw.js').catch(()=>{}); }catch(e){} });
+}
+</script>
+</body>
+</html>
